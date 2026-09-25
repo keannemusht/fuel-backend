@@ -1,0 +1,182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  FUELMAN
+  MANAGEMENT
+}
+
+enum UnitCategory {
+  HEAVY_EQUIPMENT
+  DUMP_TRUCK
+  SUPPORT_VEHICLE
+  GENERATOR
+  LIGHT_VEHICLE
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  BYPASS_DISPENSE
+  BATCH_IMPORT
+  LOGIN
+  EXPORT
+}
+
+model User {
+  id           String      @id @default(uuid())
+  username     String      @unique
+  email        String      @unique
+  passwordHash String
+  fullName     String
+  role         Role        @default(FUELMAN)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  fuelLogs     FuelLog[]   @relation("FuelmanLogs")
+  auditLogs    AuditLog[]
+
+  @@index([role])
+}
+
+model Unit {
+  id          String       @id @default(uuid())
+  unitCode    String       @unique
+  plateNumber String?
+  category    UnitCategory @default(DUMP_TRUCK)
+  makeModel   String?
+  lastKm      Float        @default(0.0)
+  lastHm      Float        @default(0.0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  fuelLogs    FuelLog[]
+
+  @@index([unitCode])
+  @@index([category])
+}
+
+model StorageTank {
+  id                  String   @id @default(uuid())
+  tankCode            String   @unique
+  name                String
+  capacityLiters      Float    @default(50000.0)
+  currentStockLiters  Float    @default(45000.0)
+  minStockAlertLiters Float    @default(5000.0)
+  fuelType            String   @default("HIGH SPEED DIESEL / SOLAR B35")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  fuelLogs            FuelLog[]
+
+  @@index([tankCode])
+}
+
+model FuelLog {
+  id               String      @id @default(uuid())
+  logNumber        String      @unique
+  no               Int         @default(0)
+  
+  // Relational IDs
+  unitId           String
+  fuelmanId        String
+  tankId           String
+  
+  // 15 Spreadsheet / Operational Columns
+  unitCode         String      // NO UNIT
+  category         String      // KATEGORI
+  dateStr          String      // DATE (YYYY-MM-DD)
+  jamStr           String      // JAM (HH:mm:ss)
+  previousHm       Float       // Baseline HM before this dispense
+  currentHm        Float       // HM (Current Hour Meter)
+  deltaHm          Float       // Delta HM
+  previousKm       Float       // Baseline KM before this dispense
+  currentKm        Float       // KM (Current Odometer)
+  deltaKm          Float       // Delta KM
+  volumeLiters     Float       // QTY OUT ( LITER )
+  shift            String      // SHIFT (e.g. SHIFT 1 / SHIFT 2 / DAY / NIGHT)
+  operator         String      // OPERATOR (Driver / Machine Operator)
+  fuelInLiters     Float       @default(0.0) // FUEL IN (Liters received if refilling tank)
+  totalFuelOut     Float       @default(0.0) // TOTAL FUEL OUT (Cumulative dispensed)
+  stockAkhir       Float       @default(0.0) // STOCK AKHIR (Remaining tank balance)
+  totalFuelIn      Float       @default(0.0) // TOTAL FUEL IN (Cumulative received)
+  fuelmanName      String      // FUELMAN (Officer Name)
+
+  // Validation & Safety Flag
+  bypassValidation Boolean     @default(false)
+  bypassReason     String?
+  dispensedAt      DateTime    @default(now())
+  
+  // Real-time Sync Status
+  syncStatus       SyncStatus  @default(PENDING)
+  syncedAt         DateTime?
+  syncError        String?
+
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  // Relations
+  unit             Unit        @relation(fields: [unitId], references: [id])
+  fuelman          User        @relation("FuelmanLogs", fields: [fuelmanId], references: [id])
+  tank             StorageTank @relation(fields: [tankId], references: [id])
+
+  @@index([unitId])
+  @@index([fuelmanId])
+  @@index([tankId])
+  @@index([dateStr])
+  @@index([syncStatus])
+  @@index([dispensedAt])
+}
+
+model SyncQueue {
+  id          String      @id @default(uuid())
+  entityType  String      @default("FuelLog")
+  entityId    String
+  payload     String      // JSON stringified payload matching the 15 columns
+  status      SyncStatus  @default(PENDING)
+  retryCount  Int         @default(0)
+  maxRetries  Int         @default(5)
+  lastError   String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([status])
+  @@index([entityId])
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  userId      String?
+  action      AuditAction
+  entity      String
+  entityId    String?
+  oldValues   String?     // JSON stringified
+  newValues   String?     // JSON stringified
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+
+  user        User?       @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
