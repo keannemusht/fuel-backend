@@ -39,6 +39,16 @@ export const createApp = () => {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // Root Check
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      status: 'ONLINE',
+      service: 'Batara FMS-Core Backend API',
+      health: '/api/health',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // API Routes
   app.use('/api', routes);
 
