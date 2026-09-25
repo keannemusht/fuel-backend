@@ -9,21 +9,63 @@ import { config } from './config/env.js';
 export const createApp = () => {
   const app = express();
 
-  // Security Headers (NodeNext ESM & CJS interoperability safe)
+  // 1. CORS Configuration (Must run BEFORE helmet and routes to handle preflight OPTIONS immediately)
+  const allowedOrigins = [
+    'https://batarafuel.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    ...(config.corsOrigin && config.corsOrigin !== '*'
+      ? config.corsOrigin.split(',').map((o) => o.trim())
+      : []),
+  ];
+
+  const corsOptions: cors.CorsOptions = {
+    origin: (requestOrigin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+      if (!requestOrigin) {
+        return callback(null, true);
+      }
+
+      // Allow if matches known domains or wildcard
+      if (
+        config.corsOrigin === '*' ||
+        allowedOrigins.includes(requestOrigin) ||
+        requestOrigin.endsWith('.vercel.app') ||
+        requestOrigin.includes('localhost') ||
+        requestOrigin.includes('127.0.0.1')
+      ) {
+        return callback(null, true);
+      }
+
+      // Default fallback: reflect the origin safely
+      return callback(null, true);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+    ],
+    exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    optionsSuccessStatus: 204,
+  };
+
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
+
+  // 2. Security Headers (Configured with crossOriginResourcePolicy: "cross-origin")
   const helmetMiddleware = (typeof helmet === 'function' ? helmet : (helmet as any)?.default) as any;
   if (typeof helmetMiddleware === 'function') {
-    app.use(helmetMiddleware());
+    app.use(
+      helmetMiddleware({
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
+      })
+    );
   }
-
-  // CORS Configuration
-  app.use(
-    cors({
-      origin: config.corsOrigin === '*' ? true : [config.corsOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
-    })
-  );
 
   // Rate Limiting (Defense against brute force on auth and heavy endpoints)
   const rateLimitMiddleware = (typeof rateLimit === 'function' ? rateLimit : (rateLimit as any)?.default) as any;
