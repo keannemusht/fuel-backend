@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { config } from './config/env.js';
@@ -9,8 +9,11 @@ import { config } from './config/env.js';
 export const createApp = () => {
   const app = express();
 
-  // Security Headers
-  app.use(helmet());
+  // Security Headers (NodeNext ESM & CJS interoperability safe)
+  const helmetMiddleware = (typeof helmet === 'function' ? helmet : (helmet as any)?.default) as any;
+  if (typeof helmetMiddleware === 'function') {
+    app.use(helmetMiddleware());
+  }
 
   // CORS Configuration
   app.use(
@@ -23,7 +26,8 @@ export const createApp = () => {
   );
 
   // Rate Limiting (Defense against brute force on auth and heavy endpoints)
-  const limiter = rateLimit({
+  const rateLimitMiddleware = (typeof rateLimit === 'function' ? rateLimit : (rateLimit as any)?.default) as any;
+  const limiter = rateLimitMiddleware({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 500, // Limit each IP to 500 requests per 15 minutes
     standardHeaders: true,
