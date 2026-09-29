@@ -44,9 +44,23 @@ const recordBackdateSchema = z.object({
   }),
 });
 
+const recordInboundSchema = z.object({
+  body: z.object({
+    tankId: z.string().min(1, 'Storage tank selection is required'),
+    fuelInLiters: z.number().positive('Fuel In volume must be greater than 0'),
+    operator: z.string().min(1, 'Supplier / Driver name is required'),
+    shift: z.string().optional(),
+    dateStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date format must be YYYY-MM-DD').optional(),
+    jamStr: z.string().optional(),
+    fuelmanName: z.string().optional(),
+    notes: z.string().optional(),
+  }),
+});
+
 router.use(authenticateJwt);
 
 router.post('/dispense', validateRequest(recordDispenseSchema), FuelController.recordDispense);
+router.post('/inbound', validateRequest(recordInboundSchema), FuelController.recordInboundFuel);
 router.get('/meter-context', FuelController.getMeterContext);
 router.get('/operators', FuelController.getOperators);
 router.post('/backdate', requireRole([Role.ADMIN, Role.MANAGEMENT]), validateRequest(recordBackdateSchema), FuelController.recordBackdate);

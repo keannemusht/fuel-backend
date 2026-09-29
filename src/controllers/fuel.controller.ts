@@ -19,6 +19,18 @@ export class FuelController {
     }
   }
 
+  static async recordInboundFuel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await FuelService.recordInboundFuel(req.body, req.user!, {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return sendSuccess(res, result, 'Inbound fuel delivery recorded successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async getMeterContext(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const { unitId, dateStr, jamStr } = req.query;

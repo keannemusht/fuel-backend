@@ -26,6 +26,8 @@ export class UnitController {
 
       if (isActive !== undefined) {
         where.isActive = isActive === 'true';
+      } else {
+        where.isActive = true;
       }
 
       const units = await prisma.unit.findMany({

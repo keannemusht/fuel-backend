@@ -91,14 +91,34 @@ export class GoogleSheetsService {
    * E.g. "14.30.00" -> "14:30", "11:04:17" -> "11:04", "0:01:00" -> "0:01"
    */
   static normalizeJam(jam?: string): string {
-    if (!jam) return '00:00';
-    const clean = jam.trim().replace(/\./g, ':');
-    const parts = clean.split(':');
+    const getFallbackWitaTime = () => {
+      try {
+        return new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Makassar',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(new Date());
+      } catch {
+        return '08:00';
+      }
+    };
+
+    if (!jam) return getFallbackWitaTime();
+    const clean = jam.trim();
+
+    // Guard against date strings (e.g. "28/09/2026" or "2026-09-28") accidentally passed as time
+    if (clean.includes('/') || /^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      return getFallbackWitaTime();
+    }
+
+    const formatted = clean.replace(/\./g, ':');
+    const parts = formatted.split(':');
     if (parts.length >= 2) {
       const h = parseInt(parts[0], 10);
-      const m = parts[1].padStart(2, '0');
+      const m = parts[1].slice(0, 2).padStart(2, '0');
       if (!isNaN(h) && h >= 0 && h < 24) {
-        return `${h}:${m}`;
+        return `${String(h).padStart(2, '0')}:${m}`;
       }
     }
     return clean;
@@ -210,7 +230,7 @@ export class GoogleSheetsService {
                         verticalAlignment: 'BOTTOM',
                       },
                     },
-                    fields: 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)',
+                    fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
                   },
                 },
               ],
@@ -239,13 +259,9 @@ export class GoogleSheetsService {
                         type: 'DATE',
                         pattern: 'yyyy-mm-dd',
                       },
-                      textFormat: {
-                        fontFamily: 'Arial',
-                        fontSize: 10,
-                      },
                     },
                   },
-                  fields: 'userEnteredFormat(numberFormat,textFormat)',
+                  fields: 'userEnteredFormat.numberFormat',
                 },
               },
               {
@@ -260,15 +276,49 @@ export class GoogleSheetsService {
                     userEnteredFormat: {
                       numberFormat: {
                         type: 'TIME',
-                        pattern: 'h:mm',
-                      },
-                      textFormat: {
-                        fontFamily: 'Arial',
-                        fontSize: 10,
+                        pattern: 'hh:mm',
                       },
                     },
                   },
-                  fields: 'userEnteredFormat(numberFormat,textFormat)',
+                  fields: 'userEnteredFormat.numberFormat',
+                },
+              },
+              {
+                repeatCell: {
+                  range: {
+                    sheetId: targetSheetId,
+                    startRowIndex: 1,
+                    startColumnIndex: 5,
+                    endColumnIndex: 8,
+                  },
+                  cell: {
+                    userEnteredFormat: {
+                      numberFormat: {
+                        type: 'NUMBER',
+                        pattern: '#,##0.00',
+                      },
+                    },
+                  },
+                  fields: 'userEnteredFormat.numberFormat',
+                },
+              },
+              {
+                repeatCell: {
+                  range: {
+                    sheetId: targetSheetId,
+                    startRowIndex: 1,
+                    startColumnIndex: 10,
+                    endColumnIndex: 14,
+                  },
+                  cell: {
+                    userEnteredFormat: {
+                      numberFormat: {
+                        type: 'NUMBER',
+                        pattern: '#,##0.00',
+                      },
+                    },
+                  },
+                  fields: 'userEnteredFormat.numberFormat',
                 },
               },
             ],
@@ -373,6 +423,21 @@ export class GoogleSheetsService {
     for (const targetSheet of targetSheets) {
       try {
         await this.ensureSheetReady(sheets, targetSheet);
+
+        // Idempotency check: verify if data.no already exists in targetSheet
+        const existingColARes = await sheets.spreadsheets.values.get({
+          spreadsheetId: config.googleSheets.spreadsheetId,
+          range: `'${targetSheet}'!A:A`,
+        });
+
+        const existingValues = existingColARes.data.values || [];
+        const isDuplicate = existingValues.some((row: any[]) => String(row[0] || '').trim() === String(data.no).trim());
+
+        if (isDuplicate) {
+          logger.warn(`Row with NO ID "${data.no}" already exists in sheet "${targetSheet}". Skipping duplicate append.`);
+          appendedCount++;
+          continue;
+        }
 
         await sheets.spreadsheets.values.append({
           spreadsheetId: config.googleSheets.spreadsheetId,
@@ -570,10 +635,12 @@ export class GoogleSheetsService {
    * Process all pending or failed sync items from SyncQueue with retry backoff
    */
   static async processSyncQueue(): Promise<{ processed: number; succeeded: number; failed: number }> {
+    const fifteenSecondsAgo = new Date(Date.now() - 15000);
     const queueItems = await prisma.syncQueue.findMany({
       where: {
         status: { in: [SyncStatus.PENDING, SyncStatus.FAILED] },
         retryCount: { lt: 5 },
+        createdAt: { lt: fifteenSecondsAgo },
       },
       take: 20,
       orderBy: { createdAt: 'asc' },

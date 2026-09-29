@@ -37,7 +37,57 @@ export interface CreateBackdateDispenseDto {
   fuelmanName?: string;
 }
 
+export interface CreateInboundFuelDto {
+  tankId: string;
+  fuelInLiters: number;
+  operator: string;
+  shift?: string;
+  dateStr?: string;
+  jamStr?: string;
+  fuelmanName?: string;
+  notes?: string;
+}
+
 export class FuelService {
+  /**
+   * Generates a standardized ISO Docket ID for fuel transactions:
+   * - Dispense / Fuel Out: F-YYYY-MM-DD-0001
+   * - Refill / Tank Inbound: R-YYYY-MM-DD-0001
+   * The daily sequence number is auto-incremented based on existing logs on that date.
+   */
+  static async generateDocketId(
+    tx: any,
+    isRefill: boolean,
+    dateStr: string
+  ): Promise<{ docketId: string; seq: number }> {
+    const prefix = isRefill ? 'R' : 'F';
+    const datePattern = `${prefix}-${dateStr}-`; // e.g. "F-2026-09-28-"
+
+    // Query existing logs on this date matching this prefix
+    const existingLogs = await tx.fuelLog.findMany({
+      where: {
+        dateStr,
+        logNumber: { startsWith: `${prefix}-` },
+      },
+      select: { logNumber: true },
+    });
+
+    let maxSeq = 0;
+    for (const log of existingLogs) {
+      const parts = log.logNumber.split('-');
+      if (parts.length >= 5) {
+        const num = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    }
+
+    const seq = maxSeq + 1;
+    const docketId = `${datePattern}${String(seq).padStart(4, '0')}`;
+    return { docketId, seq };
+  }
+
   /**
    * Performs an atomic fuel dispense transaction with strict Odometer & Hour meter delta checks.
    */
@@ -78,7 +128,13 @@ export class FuelService {
     let witaTimeStr: string;
     try {
       todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Makassar' }).format(now); // YYYY-MM-DD
-      witaTimeStr = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Makassar', hour12: false }).format(now); // HH:mm:ss
+      witaTimeStr = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Makassar',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(now); // HH:mm:ss
     } catch {
       todayStr = now.toISOString().split('T')[0];
       witaTimeStr = now.toTimeString().split(' ')[0];
@@ -245,15 +301,17 @@ export class FuelService {
       const totalFuelIn = parseFloat(((prevTotals._sum.fuelInLiters || 0) + fuelInLiters).toFixed(2));
       const newStockBalance = parseFloat((tank.currentStockLiters - volumeLiters + fuelInLiters).toFixed(2));
 
-      // 7. Generate Log Number
-      const logCount = await tx.fuelLog.count();
-      const logNumber = `LOG-${dateStr.replace(/-/g, '')}-${String(logCount + 1).padStart(5, '0')}`;
+      // 7. Generate ISO Docket ID: F-YYYY-MM-DD-0001 (or R-YYYY-MM-DD-0001 if fuelIn only)
+      const isRefill = volumeLiters <= 0 && fuelInLiters > 0;
+      const { docketId, seq } = await FuelService.generateDocketId(tx, isRefill, dateStr);
+      const logNumber = docketId;
+      const nextNo = seq;
 
       // 8. Create FuelLog record
       const fuelLog = await tx.fuelLog.create({
         data: {
           logNumber,
-          no: logCount + 1,
+          no: nextNo,
           unitId: unit.id,
           fuelmanId: currentUser.id,
           tankId: tank.id,
@@ -303,7 +361,7 @@ export class FuelService {
 
       // 11. Prepare Google Sheets 15-Column Row Payload
       const spreadsheetData: SpreadsheetRowData = {
-        no: fuelLog.no,
+        no: docketId,
         unitCode: unit.unitCode,
         category: unit.category,
         date: dateStr,
@@ -372,37 +430,290 @@ export class FuelService {
       };
     });
 
-    // Asynchronously trigger Google Sheets append (non-blocking)
-    setImmediate(async () => {
-      try {
-        const syncResult = await GoogleSheetsService.appendFuelRow(result.spreadsheetData);
-        if (syncResult.success) {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: result.fuelLog.id },
-              data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date() },
-            }),
-            prisma.syncQueue.update({
-              where: { id: result.syncQueueId },
-              data: { status: SyncStatus.SYNCED, updatedAt: new Date() },
-            }),
-          ]);
-        } else {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: result.fuelLog.id },
-              data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
-            }),
-            prisma.syncQueue.update({
-              where: { id: result.syncQueueId },
-              data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: 1 },
-            }),
-          ]);
-        }
-      } catch (err: any) {
-        logger.error('Non-blocking Google Sheets sync dispatch error:', err);
+    // Trigger Google Sheets append
+    try {
+      const syncResult = await GoogleSheetsService.appendFuelRow(result.spreadsheetData);
+      if (syncResult.success) {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date() },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.SYNCED, updatedAt: new Date() },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.SYNCED;
+        (result.fuelLog as any).syncedAt = new Date();
+      } else {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: 1 },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.FAILED;
+        (result.fuelLog as any).syncError = syncResult.error;
       }
+    } catch (err: any) {
+      logger.error('Google Sheets sync dispatch error:', err);
+    }
+
+    return result;
+  }
+
+  /**
+   * Records an atomic inbound fuel delivery (refill storage tank from supplier).
+   * Aligned with existing dataset format: unitCode 'PENGISIAN', volumeLiters 0, fuelInLiters > 0, delta 0.
+   */
+  static async recordInboundFuel(
+    dto: CreateInboundFuelDto,
+    currentUser: AuthenticatedUser,
+    clientMeta?: { ipAddress?: string; userAgent?: string }
+  ) {
+    const {
+      tankId,
+      fuelInLiters,
+      operator,
+      notes,
+    } = dto;
+
+    if (!fuelInLiters || fuelInLiters <= 0) {
+      throw new AppError('Inbound fuel volume (fuelInLiters) must be greater than 0', 422);
+    }
+
+    if (!operator || operator.trim().length === 0) {
+      throw new AppError('Supplier / Driver name (operator) is required', 422);
+    }
+
+    // Operational Time in WITA (Asia/Makassar, UTC+8 - Site Operational Time)
+    const now = new Date();
+    let todayStr: string;
+    let witaTimeStr: string;
+    try {
+      todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Makassar' }).format(now); // YYYY-MM-DD
+      witaTimeStr = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Makassar',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(now); // HH:mm:ss
+    } catch {
+      todayStr = now.toISOString().split('T')[0];
+      witaTimeStr = now.toTimeString().split(' ')[0];
+    }
+    const dateStr = dto.dateStr || todayStr;
+    const jamStr = (dto.jamStr || witaTimeStr).trim().replace(/\./g, ':');
+
+    // Determine shift
+    let resolvedShift = dto.shift?.trim();
+    if (!resolvedShift) {
+      const hour = parseInt(jamStr.split(':')[0], 10);
+      resolvedShift = (!isNaN(hour) && hour >= 6 && hour < 18) ? 'SHIFT 1' : 'SHIFT 2';
+    }
+
+    // Parse dispensedAt timestamp
+    let dispensedAt = now;
+    try {
+      const parsed = new Date(`${dateStr}T${jamStr}`);
+      if (!isNaN(parsed.getTime())) {
+        dispensedAt = parsed;
+      }
+    } catch {}
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Fetch & lock StorageTank
+      const tank = await tx.storageTank.findUnique({
+        where: { id: tankId },
+      });
+
+      if (!tank) {
+        throw new AppError(`Storage Tank with ID ${tankId} not found`, 404);
+      }
+
+      // 2. Fetch or create special "PENGISIAN" Unit (matches existing dataset format)
+      let unit = await tx.unit.findUnique({
+        where: { unitCode: 'PENGISIAN' },
+      });
+
+      if (!unit) {
+        unit = await tx.unit.create({
+          data: {
+            unitCode: 'PENGISIAN',
+            category: UnitCategory.DUMP_TRUCK,
+            lastKm: 0,
+            lastHm: 0,
+            isActive: true,
+          },
+        });
+      }
+
+      // 3. Running Totals Calculation
+      const prevTotals = await tx.fuelLog.aggregate({
+        where: { tankId: tank.id },
+        _sum: {
+          volumeLiters: true,
+          fuelInLiters: true,
+        },
+      });
+
+      const totalFuelOut = parseFloat((prevTotals._sum.volumeLiters || 0).toFixed(2));
+      const totalFuelIn = parseFloat(((prevTotals._sum.fuelInLiters || 0) + fuelInLiters).toFixed(2));
+      const newStockBalance = parseFloat((tank.currentStockLiters + fuelInLiters).toFixed(2));
+
+      // 4. Generate ISO Docket ID: R-YYYY-MM-DD-0001
+      const { docketId, seq } = await FuelService.generateDocketId(tx, true, dateStr);
+      const logNumber = docketId;
+      const nextNo = seq;
+
+      const fuelmanName = dto.fuelmanName || currentUser.fullName || currentUser.username;
+      const bypassReason = notes && notes.trim()
+        ? `Penerimaan BBM Supplier / Refill Tangki: ${notes.trim()}`
+        : 'Penerimaan BBM Supplier / Refill Tangki';
+
+      // 5. Create FuelLog record matching the 15-column format
+      const fuelLog = await tx.fuelLog.create({
+        data: {
+          logNumber,
+          no: nextNo,
+          unitId: unit.id,
+          fuelmanId: currentUser.id,
+          tankId: tank.id,
+          unitCode: 'PENGISIAN',
+          category: unit.category,
+          dateStr,
+          jamStr,
+          previousKm: 0,
+          currentKm: 0,
+          deltaKm: 0,
+          previousHm: 0,
+          currentHm: 0,
+          deltaHm: 0,
+          volumeLiters: 0,
+          shift: resolvedShift,
+          operator: operator.trim(),
+          fuelInLiters,
+          totalFuelOut,
+          stockAkhir: newStockBalance,
+          totalFuelIn,
+          fuelmanName,
+          bypassValidation: true,
+          bypassReason,
+          syncStatus: SyncStatus.PENDING,
+          dispensedAt,
+        },
+      });
+
+      // 6. Update Storage Tank Stock
+      await tx.storageTank.update({
+        where: { id: tank.id },
+        data: {
+          currentStockLiters: newStockBalance,
+          updatedAt: now,
+        },
+      });
+
+      // 7. Prepare Google Sheets 15-Column Row Payload
+      const spreadsheetData: SpreadsheetRowData = {
+        no: docketId,
+        unitCode: 'PENGISIAN',
+        category: unit.category,
+        date: dateStr,
+        jam: jamStr,
+        hm: 0,
+        km: 0,
+        qtyOut: 0,
+        shift: resolvedShift,
+        operator: operator.trim(),
+        fuelIn: fuelInLiters,
+        totalFuelOut,
+        stockAkhir: newStockBalance,
+        totalFuelIn,
+        fuelman: fuelmanName,
+      };
+
+      // 8. Queue for background sync
+      const syncQueue = await tx.syncQueue.create({
+        data: {
+          entityType: 'FuelLog',
+          entityId: fuelLog.id,
+          payload: JSON.stringify(spreadsheetData),
+          status: SyncStatus.PENDING,
+        },
+      });
+
+      // 9. Create Audit Trail
+      await tx.auditLog.create({
+        data: {
+          userId: currentUser.id,
+          action: AuditAction.CREATE,
+          entity: 'FuelLog',
+          entityId: fuelLog.id,
+          oldValues: JSON.stringify({
+            tankStock: tank.currentStockLiters,
+          }),
+          newValues: JSON.stringify({
+            tankStock: newStockBalance,
+            fuelInLiters,
+            operator: operator.trim(),
+            notes: notes?.trim() || null,
+          }),
+          ipAddress: clientMeta?.ipAddress,
+          userAgent: clientMeta?.userAgent,
+        },
+      });
+
+      return {
+        fuelLog,
+        spreadsheetData,
+        syncQueueId: syncQueue.id,
+        tank: {
+          id: tank.id,
+          name: tank.name,
+          currentStockLiters: newStockBalance,
+        },
+      };
     });
+
+    // Trigger Google Sheets append
+    try {
+      const syncResult = await GoogleSheetsService.appendFuelRow(result.spreadsheetData);
+      if (syncResult.success) {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date() },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.SYNCED, updatedAt: new Date() },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.SYNCED;
+        (result.fuelLog as any).syncedAt = new Date();
+      } else {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: 1 },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.FAILED;
+        (result.fuelLog as any).syncError = syncResult.error;
+      }
+    } catch (err: any) {
+      logger.error('Google Sheets sync dispatch error for inbound fuel:', err);
+    }
 
     return result;
   }
@@ -745,15 +1056,17 @@ export class FuelService {
       const totalFuelIn = parseFloat(((prevTotals._sum.fuelInLiters || 0) + fuelInLiters).toFixed(2));
       const newStockBalance = parseFloat((tank.currentStockLiters - volumeLiters + fuelInLiters).toFixed(2));
 
-      // 7. Generate Log Number
-      const logCount = await tx.fuelLog.count();
-      const logNumber = `LOG-${dateStr.replace(/-/g, '')}-${String(logCount + 1).padStart(5, '0')}`;
+      // 7. Generate ISO Docket ID: F-YYYY-MM-DD-0001 (or R-YYYY-MM-DD-0001 if fuelIn only)
+      const isRefill = volumeLiters <= 0 && fuelInLiters > 0;
+      const { docketId, seq } = await FuelService.generateDocketId(tx, isRefill, dateStr);
+      const logNumber = docketId;
+      const nextNo = seq;
 
       // 8. Create FuelLog record
       const fuelLog = await tx.fuelLog.create({
         data: {
           logNumber,
-          no: logCount + 1,
+          no: nextNo,
           unitId: unit.id,
           fuelmanId: currentUser.id,
           tankId: tank.id,
@@ -818,7 +1131,7 @@ export class FuelService {
 
       // 11. Prepare Google Sheets 15-Column Row Payload
       const spreadsheetData: SpreadsheetRowData = {
-        no: fuelLog.no,
+        no: docketId,
         unitCode: unit.unitCode,
         category: unit.category,
         date: dateStr,
@@ -892,37 +1205,39 @@ export class FuelService {
       };
     }, { maxWait: 10000, timeout: 25000 });
 
-    // Asynchronously trigger Google Sheets append (non-blocking)
-    setImmediate(async () => {
-      try {
-        const syncResult = await GoogleSheetsService.appendFuelRow(result.spreadsheetData);
-        if (syncResult.success) {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: result.fuelLog.id },
-              data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date() },
-            }),
-            prisma.syncQueue.update({
-              where: { id: result.syncQueueId },
-              data: { status: SyncStatus.SYNCED, updatedAt: new Date() },
-            }),
-          ]);
-        } else {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: result.fuelLog.id },
-              data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
-            }),
-            prisma.syncQueue.update({
-              where: { id: result.syncQueueId },
-              data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: 1 },
-            }),
-          ]);
-        }
-      } catch (err: any) {
-        logger.error('Non-blocking Google Sheets sync dispatch error (backdate):', err);
+    // Trigger Google Sheets append
+    try {
+      const syncResult = await GoogleSheetsService.appendFuelRow(result.spreadsheetData);
+      if (syncResult.success) {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date() },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.SYNCED, updatedAt: new Date() },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.SYNCED;
+        (result.fuelLog as any).syncedAt = new Date();
+      } else {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: result.fuelLog.id },
+            data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
+          }),
+          prisma.syncQueue.update({
+            where: { id: result.syncQueueId },
+            data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: 1 },
+          }),
+        ]);
+        (result.fuelLog as any).syncStatus = SyncStatus.FAILED;
+        (result.fuelLog as any).syncError = syncResult.error;
       }
-    });
+    } catch (err: any) {
+      logger.error('Google Sheets sync dispatch error (backdate):', err);
+    }
 
     return result;
   }
@@ -1130,11 +1445,11 @@ export class FuelService {
       fuelmanId = firstUser ? firstUser.id : currentUser.id;
     }
 
-    const logCount = await prisma.fuelLog.count();
-    const nextNo = parseInt(String(data.no), 10) || (logCount + 1);
     const dateStr = data.dateStr || new Date().toISOString().slice(0, 10);
-    const dateClean = dateStr.replace(/-/g, '');
-    const logNumber = `LOG-${dateClean}-${String(nextNo).padStart(6, '0')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const isRefill = (parseFloat(data.volumeLiters) || 0) <= 0 && (parseFloat(data.fuelInLiters) || 0) > 0;
+    const { docketId, seq } = await FuelService.generateDocketId(prisma, isRefill, dateStr);
+    const logNumber = data.logNumber || docketId;
+    const nextNo = parseInt(String(data.no), 10) || seq;
 
     const currentKm = parseFloat(data.currentKm) || 0;
     const currentHm = parseFloat(data.currentHm) || 0;
@@ -1257,36 +1572,37 @@ export class FuelService {
       },
     });
 
-    setImmediate(async () => {
-      try {
-        const syncResult = await GoogleSheetsService.appendFuelRow(spreadsheetData);
-        if (syncResult.success) {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: log.id },
-              data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date(), syncError: null },
-            }),
-            prisma.syncQueue.update({
-              where: { id: syncQueue.id },
-              data: { status: SyncStatus.SYNCED, updatedAt: new Date(), lastError: null },
-            }),
-          ]);
-        } else {
-          await prisma.$transaction([
-            prisma.fuelLog.update({
-              where: { id: log.id },
-              data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
-            }),
-            prisma.syncQueue.update({
-              where: { id: syncQueue.id },
-              data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: { increment: 1 } },
-            }),
-          ]);
-        }
-      } catch (err: any) {
-        logger.error('Failed to auto-sync historical log to Google Sheets:', err);
+    try {
+      const syncResult = await GoogleSheetsService.appendFuelRow(spreadsheetData);
+      if (syncResult.success) {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: log.id },
+            data: { syncStatus: SyncStatus.SYNCED, syncedAt: new Date(), syncError: null },
+          }),
+          prisma.syncQueue.update({
+            where: { id: syncQueue.id },
+            data: { status: SyncStatus.SYNCED, updatedAt: new Date(), lastError: null },
+          }),
+        ]);
+        (log as any).syncStatus = SyncStatus.SYNCED;
+        (log as any).syncedAt = new Date();
+      } else {
+        await prisma.$transaction([
+          prisma.fuelLog.update({
+            where: { id: log.id },
+            data: { syncStatus: SyncStatus.FAILED, syncError: syncResult.error },
+          }),
+          prisma.syncQueue.update({
+            where: { id: syncQueue.id },
+            data: { status: SyncStatus.FAILED, lastError: syncResult.error, retryCount: { increment: 1 } },
+          }),
+        ]);
+        (log as any).syncStatus = SyncStatus.FAILED;
       }
-    });
+    } catch (err: any) {
+      logger.error('Failed to auto-sync historical log to Google Sheets:', err);
+    }
 
     return log;
   }

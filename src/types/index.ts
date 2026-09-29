@@ -14,7 +14,7 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export interface SpreadsheetRowData {
-  no: number;
+  no: number | string;
   unitCode: string;
   category: string;
   date: string;
