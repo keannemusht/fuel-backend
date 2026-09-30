@@ -239,96 +239,208 @@ export class GoogleSheetsService {
         }
       }
 
-      // Format Date (Col D) and Jam (Col E) columns for data rows (matching template tabs Jan - Aug)
-      if (targetSheetId !== undefined && targetSheetId !== null) {
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: config.googleSheets.spreadsheetId,
-          requestBody: {
-            requests: [
-              {
-                repeatCell: {
-                  range: {
-                    sheetId: targetSheetId,
-                    startRowIndex: 1,
-                    startColumnIndex: 3,
-                    endColumnIndex: 4,
-                  },
-                  cell: {
-                    userEnteredFormat: {
-                      numberFormat: {
-                        type: 'DATE',
-                        pattern: 'yyyy-mm-dd',
-                      },
-                    },
-                  },
-                  fields: 'userEnteredFormat.numberFormat',
-                },
-              },
-              {
-                repeatCell: {
-                  range: {
-                    sheetId: targetSheetId,
-                    startRowIndex: 1,
-                    startColumnIndex: 4,
-                    endColumnIndex: 5,
-                  },
-                  cell: {
-                    userEnteredFormat: {
-                      numberFormat: {
-                        type: 'TIME',
-                        pattern: 'hh:mm',
-                      },
-                    },
-                  },
-                  fields: 'userEnteredFormat.numberFormat',
-                },
-              },
-              {
-                repeatCell: {
-                  range: {
-                    sheetId: targetSheetId,
-                    startRowIndex: 1,
-                    startColumnIndex: 5,
-                    endColumnIndex: 8,
-                  },
-                  cell: {
-                    userEnteredFormat: {
-                      numberFormat: {
-                        type: 'NUMBER',
-                        pattern: '#,##0.00',
-                      },
-                    },
-                  },
-                  fields: 'userEnteredFormat.numberFormat',
-                },
-              },
-              {
-                repeatCell: {
-                  range: {
-                    sheetId: targetSheetId,
-                    startRowIndex: 1,
-                    startColumnIndex: 10,
-                    endColumnIndex: 14,
-                  },
-                  cell: {
-                    userEnteredFormat: {
-                      numberFormat: {
-                        type: 'NUMBER',
-                        pattern: '#,##0.00',
-                      },
-                    },
-                  },
-                  fields: 'userEnteredFormat.numberFormat',
-                },
-              },
-            ],
-          },
-        }).catch((err: any) => logger.warn(`Column formatting warning for "${targetSheetName}": ${err.message}`));
-      }
+      // Enforce column formatting for data rows (DATE, JAM, and numbers)
+      await this.applySheetFormatting(sheets, targetSheetName);
 
       this.readySheets.add(targetSheetName);
     } catch (e: any) {
       logger.warn(`Google Sheets auto-initialization for "${targetSheetName}" warning:`, e.message);
+    }
+  }
+
+  /**
+   * Applies standard column formatting across the specified sheet tab:
+   * - DATE (Col D / Index 3): yyyy-mm-dd, LEFT aligned
+   * - JAM (Col E / Index 4): hh:mm, LEFT aligned
+   * - HM, KM, QTY OUT (Cols F..H / Index 5..8): #,##0.00, RIGHT aligned
+   * - FUEL IN, TOTAL OUT, STOCK AKHIR, TOTAL IN (Cols K..N / Index 10..14): #,##0.00, RIGHT aligned
+   * - Arial 10pt styling to perfectly match template tabs (JANUARI - AGUSTUS 2026)
+   */
+  static async applySheetFormatting(sheets: any, targetSheetName: string) {
+    try {
+      const sheetId = await this.getSheetId(sheets, targetSheetName);
+      if (sheetId === null || sheetId === undefined) return;
+
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: config.googleSheets.spreadsheetId,
+        requestBody: {
+          requests: [
+            // Format Col D (DATE): yyyy-mm-dd
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1, // Row 2 onwards
+                  startColumnIndex: 3,
+                  endColumnIndex: 4,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: {
+                      type: 'DATE',
+                      pattern: 'yyyy-mm-dd',
+                    },
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Col E (JAM): hh:mm
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 4,
+                  endColumnIndex: 5,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: {
+                      type: 'TIME',
+                      pattern: 'hh:mm',
+                    },
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Cols F..H (HM, KM, QTY OUT): #,##0.00
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 5,
+                  endColumnIndex: 8,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: {
+                      type: 'NUMBER',
+                      pattern: '#,##0.00',
+                    },
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'RIGHT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Cols K..N (FUEL IN, TOTAL OUT, STOCK, TOTAL IN): #,##0.00
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 10,
+                  endColumnIndex: 14,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: {
+                      type: 'NUMBER',
+                      pattern: '#,##0.00',
+                    },
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'RIGHT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Cols A..C (NO, UNIT, KATEGORI): Arial 10pt LEFT
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 3,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Cols I..J (SHIFT, OPERATOR): Arial 10pt LEFT
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 8,
+                  endColumnIndex: 10,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+            // Format Col O (FUELMAN): Arial 10pt LEFT
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 14,
+                  endColumnIndex: 15,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
+          ],
+        },
+      });
+      logger.info(`Successfully applied standard column formatting to "${targetSheetName}".`);
+    } catch (err: any) {
+      logger.warn(`Column formatting warning for "${targetSheetName}": ${err.message}`);
     }
   }
 
@@ -443,7 +555,7 @@ export class GoogleSheetsService {
           spreadsheetId: config.googleSheets.spreadsheetId,
           range: `'${targetSheet}'!A:O`,
           valueInputOption: 'USER_ENTERED',
-          insertDataOption: 'INSERT_ROWS',
+          insertDataOption: 'OVERWRITE',
           requestBody: {
             values: [rowValues],
           },
@@ -451,6 +563,9 @@ export class GoogleSheetsService {
 
         // Auto-sort chronologically by DATE and JAM
         await this.sortSheetByDateAndJam(sheets, targetSheet);
+
+        // Always enforce professional column formatting (DATE, JAM, NUMBERS)
+        await this.applySheetFormatting(sheets, targetSheet);
 
         logger.info(`Successfully synced FuelLog row #${data.no} (Unit: ${data.unitCode}) to tab "${targetSheet}".`);
         appendedCount++;
@@ -528,15 +643,16 @@ export class GoogleSheetsService {
           spreadsheetId: config.googleSheets.spreadsheetId,
           range: `'${targetSheet}'!A:O`,
           valueInputOption: 'USER_ENTERED',
-          insertDataOption: 'INSERT_ROWS',
+          insertDataOption: 'OVERWRITE',
           requestBody: {
             values: chunk,
           },
         });
       }
 
-      // Ensure chronological sorting on Google Sheets
+      // Ensure chronological sorting and column formatting on Google Sheets
       await this.sortSheetByDateAndJam(sheets, targetSheet);
+      await this.applySheetFormatting(sheets, targetSheet);
 
       // Mark records as SYNCED
       await prisma.fuelLog.updateMany({
@@ -614,7 +730,7 @@ export class GoogleSheetsService {
           spreadsheetId: config.googleSheets.spreadsheetId,
           range: `'${masterSheet}'!A:O`,
           valueInputOption: 'USER_ENTERED',
-          insertDataOption: 'INSERT_ROWS',
+          insertDataOption: 'OVERWRITE',
           requestBody: {
             values: chunk,
           },
@@ -622,6 +738,7 @@ export class GoogleSheetsService {
       }
 
       await this.sortSheetByDateAndJam(sheets, masterSheet);
+      await this.applySheetFormatting(sheets, masterSheet);
 
       logger.info(`Successfully synchronized all ${logs.length} rows to master Google Sheets tab "${masterSheet}"`);
       return { success: true, targetSheet: masterSheet, totalSynced: logs.length };
