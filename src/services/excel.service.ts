@@ -58,12 +58,12 @@ export class ExcelService {
 
     sheet.addRow([]); // Blank line at row 3
 
-    // 3. Table Column Headers (Row 4)
+    // 3. Table Column Headers (Row 4) - 16 Columns
     const columns = [
       { header: 'NO', key: 'no', width: 8 },
       { header: 'NO UNIT', key: 'unitCode', width: 16 },
       { header: 'KATEGORI', key: 'category', width: 20 },
-      { header: 'TIPE', key: 'type', width: 18 },
+      { header: 'TYPE', key: 'type', width: 18 },
       { header: 'DATE', key: 'dateStr', width: 14 },
       { header: 'JAM', key: 'jamStr', width: 12 },
       { header: 'HM', key: 'currentHm', width: 14 },
@@ -114,7 +114,7 @@ export class ExcelService {
         log.no,
         log.unitCode,
         log.category,
-        log.type,
+        (log as any).type || '-',
         log.dateStr,
         log.jamStr,
         log.currentHm,
@@ -150,9 +150,11 @@ export class ExcelService {
         }
 
         // Alignments & Number formatting
+        // Center: 1 (NO), 5 (DATE), 6 (JAM), 10 (SHIFT)
         if ([1, 5, 6, 10].includes(colNumber)) {
           cell.alignment = { vertical: 'middle', horizontal: 'center' };
         } else if ([7, 8, 9, 12, 13, 14, 15].includes(colNumber)) {
+          // Right & numeric: 7 (HM), 8 (KM), 9 (QTY OUT), 12 (FUEL IN), 13 (TOTAL FUEL OUT), 14 (STOCK AKHIR), 15 (TOTAL FUEL IN)
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
           cell.numFmt = '#,##0.00';
         } else {

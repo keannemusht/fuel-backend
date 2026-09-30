@@ -178,12 +178,18 @@ export class GoogleSheetsService {
         range: `'${targetSheetName}'!A1:P1`,
       });
 
-      if (!checkRes.data.values || checkRes.data.values.length === 0) {
+      const existingHeaders = checkRes.data.values?.[0] || [];
+      const needsHeaderUpdate =
+        existingHeaders.length < 16 ||
+        existingHeaders[2] !== 'KATEGORI' ||
+        existingHeaders[3] !== 'TYPE';
+
+      if (needsHeaderUpdate) {
         const headers = [
           'NO',
           'NO UNIT',
           'KATEGORI',
-          'TIPE',
+          'TYPE',
           'DATE',
           'JAM',
           'HM',
@@ -250,12 +256,14 @@ export class GoogleSheetsService {
   }
 
   /**
-   * Applies standard column formatting across the specified sheet tab:
+   * Applies standard column formatting across the specified 16-column sheet tab:
+   * - Cols A..D (Index 0..4): NO, NO UNIT, KATEGORI, TYPE -> Arial 10pt, LEFT aligned
    * - DATE (Col E / Index 4): yyyy-mm-dd, LEFT aligned
    * - JAM (Col F / Index 5): hh:mm, LEFT aligned
    * - HM, KM, QTY OUT (Cols G..I / Index 6..9): #,##0.00, RIGHT aligned
+   * - SHIFT, OPERATOR (Cols J..K / Index 9..11): Arial 10pt, LEFT aligned
    * - FUEL IN, TOTAL OUT, STOCK AKHIR, TOTAL IN (Cols L..O / Index 11..15): #,##0.00, RIGHT aligned
-   * - Arial 10pt styling to perfectly match template tabs (JANUARI - AGUSTUS 2026)
+   * - FUELMAN (Col P / Index 15..16): Arial 10pt, LEFT aligned
    */
   static async applySheetFormatting(sheets: any, targetSheetName: string) {
     try {
@@ -266,6 +274,28 @@ export class GoogleSheetsService {
         spreadsheetId: config.googleSheets.spreadsheetId,
         requestBody: {
           requests: [
+            // Format Cols A..D (NO, UNIT, KATEGORI, TYPE): Arial 10pt LEFT
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 4,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
             // Format Col E (DATE): yyyy-mm-dd
             {
               repeatCell: {
@@ -344,6 +374,28 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
+            // Format Cols J..K (SHIFT, OPERATOR): Arial 10pt LEFT
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 9,
+                  endColumnIndex: 11,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontFamily: 'Arial',
+                      fontSize: 10,
+                    },
+                    horizontalAlignment: 'LEFT',
+                    verticalAlignment: 'BOTTOM',
+                  },
+                },
+                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+              },
+            },
             // Format Cols L..O (FUEL IN, TOTAL OUT, STOCK, TOTAL IN): #,##0.00
             {
               repeatCell: {
@@ -368,50 +420,6 @@ export class GoogleSheetsService {
                   },
                 },
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
-              },
-            },
-            // Format Cols A..D (NO, UNIT, KATEGORI, TIPE): Arial 10pt LEFT
-            {
-              repeatCell: {
-                range: {
-                  sheetId,
-                  startRowIndex: 1,
-                  startColumnIndex: 0,
-                  endColumnIndex: 4,
-                },
-                cell: {
-                  userEnteredFormat: {
-                    textFormat: {
-                      fontFamily: 'Arial',
-                      fontSize: 10,
-                    },
-                    horizontalAlignment: 'LEFT',
-                    verticalAlignment: 'BOTTOM',
-                  },
-                },
-                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
-              },
-            },
-            // Format Cols J..K (SHIFT, OPERATOR): Arial 10pt LEFT
-            {
-              repeatCell: {
-                range: {
-                  sheetId,
-                  startRowIndex: 1,
-                  startColumnIndex: 9,
-                  endColumnIndex: 11,
-                },
-                cell: {
-                  userEnteredFormat: {
-                    textFormat: {
-                      fontFamily: 'Arial',
-                      fontSize: 10,
-                    },
-                    horizontalAlignment: 'LEFT',
-                    verticalAlignment: 'BOTTOM',
-                  },
-                },
-                fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
             // Format Col P (FUELMAN): Arial 10pt LEFT
@@ -447,8 +455,8 @@ export class GoogleSheetsService {
 
   /**
    * Automatically sorts rows in the specified sheet tab chronologically:
-   * 1. DATE (Column E / index 4) ASCENDING
-   * 2. JAM (Column F / index 5) ASCENDING
+   * 1. DATE (Column D / index 3) ASCENDING
+   * 2. JAM (Column E / index 4) ASCENDING
    * 3. NO (Column A / index 0) ASCENDING
    */
   static async sortSheetByDateAndJam(sheets: any, sheetTitle: string) {
@@ -516,7 +524,7 @@ export class GoogleSheetsService {
       data.no,
       data.unitCode,
       data.category,
-      data.type || 'DUMP_TRUCK',
+      data.type || '-',
       this.normalizeDate(data.date),
       this.normalizeJam(data.jam),
       data.hm,
@@ -616,7 +624,7 @@ export class GoogleSheetsService {
       l.no,
       l.unitCode,
       l.category,
-      l.type || 'DUMP_TRUCK',
+      l.type || '-',
       this.normalizeDate(l.dateStr),
       this.normalizeJam(l.jamStr),
       l.currentHm,
@@ -706,7 +714,7 @@ export class GoogleSheetsService {
       l.no,
       l.unitCode,
       l.category,
-      l.type || 'DUMP_TRUCK',
+      l.type || '-',
       this.normalizeDate(l.dateStr),
       this.normalizeJam(l.jamStr),
       l.currentHm,

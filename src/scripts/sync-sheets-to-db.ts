@@ -4,7 +4,7 @@ dotenv.config();
 import { google } from 'googleapis';
 import { config } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
-import { SyncStatus } from '@prisma/client';
+import { SyncStatus, UnitCategory } from '@prisma/client';
 
 const MONTH_TABS = [
   { tab: 'JANUARI 2026', monthStr: '2026-01' },
@@ -17,13 +17,21 @@ const MONTH_TABS = [
   { tab: 'AGUSTUS 2026', monthStr: '2026-08' },
 ];
 
-function normalizeCategory(raw: string): string {
+function normalizeCategory(raw: string): UnitCategory {
   const upper = (raw || '').toUpperCase().trim();
-  if (upper.includes('PRODUKSI')) return 'PRODUKSI';
-  if (upper.includes('CONTRACTOR')) return 'CONTRACTOR';
-  if (upper.includes('PLANT') || upper.includes('SERVICE')) return 'PLANT SERVICE';
-  if (upper.includes('SUPPORT') || upper.includes('LV') || upper.includes('GS') || upper.includes('FT') || upper.includes('WT')) return 'SUPPORT';
-  return 'PRODUKSI';
+  if (upper.includes('DUMP') || upper.includes('DT')) return UnitCategory.DUMP_TRUCK;
+  if (
+    upper.includes('HEAVY') ||
+    upper.includes('EXCAVATOR') ||
+    upper.includes('DOZER') ||
+    upper.includes('LOADER') ||
+    upper.includes('GRADER')
+  )
+    return UnitCategory.HEAVY_EQUIPMENT;
+  if (upper.includes('GEN')) return UnitCategory.GENERATOR;
+  if (upper.includes('LIGHT') || upper.includes('LV') || upper.includes('PATROL')) return UnitCategory.LIGHT_VEHICLE;
+  if (upper.includes('SUPPORT') || upper.includes('WATER') || upper.includes('FUEL')) return UnitCategory.SUPPORT_VEHICLE;
+  return UnitCategory.DUMP_TRUCK;
 }
 
 function parseNum(val: any): number {
@@ -124,7 +132,7 @@ async function syncAllSheetsToDb() {
     console.log(`  Found ${rows.length} rows in "${tab}".`);
 
     // Step A: Bulk register new Units
-    const newUnitsMap = new Map<string, { unitCode: string; category: string; lastKm: number; lastHm: number }>();
+    const newUnitsMap = new Map<string, { unitCode: string; category: UnitCategory; lastKm: number; lastHm: number }>();
     for (const r of rows) {
       const unitCode = String(r[1] || '').trim();
       if (!unitCode) continue;

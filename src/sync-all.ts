@@ -19,7 +19,7 @@ async function syncAllExistingLogs() {
       no: log.no,
       unitCode: log.unitCode,
       category: log.category,
-      type: log.type,
+      type: (log as any).type || 'DUMP_TRUCK',
       date: log.dateStr,
       jam: log.jamStr,
       hm: log.currentHm,

@@ -1,39 +1,57 @@
 import ExcelJS from 'exceljs';
 import { prisma } from '../config/prisma.js';
-import { SyncStatus, AuditAction } from '@prisma/client';
+import { UnitCategory, SyncStatus, AuditAction } from '@prisma/client';
 import { AuditService } from './audit.service.js';
 import { AuthenticatedUser } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 export class BatchImportService {
-  private static unitCategoryMap: Record<string, string> = {
-    'PRODUKSI': 'PRODUKSI',
-    'SUPPORT': 'SUPPORT',
-    'CONTRACTOR': 'CONTRACTOR',
-    'PLANT SERVICE': 'PLANT SERVICE',
-    'PLANT': 'PLANT SERVICE',
-    'SERVICE': 'PLANT SERVICE',
-    'DUMP TRUCK': 'PRODUKSI',
-    'DUMP_TRUCK': 'PRODUKSI',
-    'DT': 'PRODUKSI',
-    'HEAVY EQUIPMENT': 'PRODUKSI',
-    'HEAVY_EQUIPMENT': 'PRODUKSI',
-    'EXCAVATOR': 'PRODUKSI',
-    'DOZER': 'PRODUKSI',
-    'LOADER': 'PRODUKSI',
-    'GRADER': 'PRODUKSI',
-    'SUPPORT VEHICLE': 'SUPPORT',
-    'SUPPORT_VEHICLE': 'SUPPORT',
-    'WATER TRUCK': 'SUPPORT',
-    'FUEL TRUCK': 'SUPPORT',
-    'GENERATOR': 'SUPPORT',
-    'GENSET': 'SUPPORT',
-    'GEN': 'SUPPORT',
-    'LIGHT VEHICLE': 'SUPPORT',
-    'LIGHT_VEHICLE': 'SUPPORT',
-    'LV': 'SUPPORT',
-    'PATROL': 'SUPPORT',
+  private static unitCategoryMap: Record<string, UnitCategory> = {
+    'DUMP TRUCK': UnitCategory.DUMP_TRUCK,
+    'DUMP_TRUCK': UnitCategory.DUMP_TRUCK,
+    'DT': UnitCategory.DUMP_TRUCK,
+    'HEAVY EQUIPMENT': UnitCategory.HEAVY_EQUIPMENT,
+    'HEAVY_EQUIPMENT': UnitCategory.HEAVY_EQUIPMENT,
+    'EXCAVATOR': UnitCategory.HEAVY_EQUIPMENT,
+    'DOZER': UnitCategory.HEAVY_EQUIPMENT,
+    'LOADER': UnitCategory.HEAVY_EQUIPMENT,
+    'GRADER': UnitCategory.HEAVY_EQUIPMENT,
+    'SUPPORT': UnitCategory.SUPPORT_VEHICLE,
+    'SUPPORT VEHICLE': UnitCategory.SUPPORT_VEHICLE,
+    'SUPPORT_VEHICLE': UnitCategory.SUPPORT_VEHICLE,
+    'WATER TRUCK': UnitCategory.SUPPORT_VEHICLE,
+    'FUEL TRUCK': UnitCategory.SUPPORT_VEHICLE,
+    'GENERATOR': UnitCategory.GENERATOR,
+    'GENSET': UnitCategory.GENERATOR,
+    'GEN': UnitCategory.GENERATOR,
+    'LIGHT VEHICLE': UnitCategory.LIGHT_VEHICLE,
+    'LIGHT_VEHICLE': UnitCategory.LIGHT_VEHICLE,
+    'LV': UnitCategory.LIGHT_VEHICLE,
+    'PATROL': UnitCategory.LIGHT_VEHICLE,
   };
+
+  static deduceTypeFromUnitCode(unitCode: string): string {
+    const code = unitCode.toUpperCase().trim();
+    if (code.startsWith('PM')) return 'DOUBLE_TRAILER';
+    if (code.startsWith('GS') || code.startsWith('MTV') || code.startsWith('WT') || code.startsWith('FT')) return 'SUPPORT_VEHICLE';
+    if (code.startsWith('LV') || code.startsWith('TR')) return 'LIGHT_VEHICLE';
+    if (code.startsWith('EX') || code.startsWith('DZ') || code.startsWith('GD') || code.startsWith('HEX')) return 'HEAVY_EQUIPMENT';
+    if (code.startsWith('GEN')) return 'GENERATOR';
+    if (code === 'PENGISIAN' || code === 'STORAGE TANK') return 'STORAGE_TANK';
+    return 'DUMP_TRUCK';
+  }
+
+  static deduceCategoryFromUnitCode(unitCode: string): string {
+    const code = unitCode.toUpperCase().trim();
+    if (code.startsWith('PM')) return 'PRODUKSI';
+    if (code.startsWith('GS') || code.startsWith('MTV') || code.startsWith('WT') || code.startsWith('FT')) return 'SUPPORT';
+    if (code.startsWith('LV') || code.startsWith('TR')) return 'SUPPORT';
+    if (code.startsWith('EX') || code.startsWith('DZ') || code.startsWith('GD')) return 'PRODUKSI';
+    if (code === 'PENGISIAN') return 'PENGISIAN';
+    if (code.includes('PAKIRA') || code.includes('CONTR') || code.includes('SUB')) return 'CONTRACTOR';
+    if (code.includes('PLANT') || code.includes('SVC') || code.includes('SERVICE')) return 'PLANT SERVICE';
+    return 'PRODUKSI';
+  }
 
   static isValidUnitCode(rawCode: string): boolean {
     if (!rawCode) return false;
@@ -277,9 +295,9 @@ export class BatchImportService {
 
     // Cache units in memory to minimize DB roundtrips during bulk processing
     const existingUnits = await prisma.unit.findMany();
-    const unitMap = new Map<string, { id: string; category: string; lastKm: number; lastHm: number }>();
+    const unitMap = new Map<string, { id: string; category: string; type: string; lastKm: number; lastHm: number }>();
     for (const u of existingUnits) {
-      unitMap.set(u.unitCode.toUpperCase(), { id: u.id, category: u.category, lastKm: u.lastKm, lastHm: u.lastHm });
+      unitMap.set(u.unitCode.toUpperCase(), { id: u.id, category: u.category, type: (u as any).type || 'DUMP_TRUCK', lastKm: u.lastKm, lastHm: u.lastHm });
     }
 
     let initialLogCount = await prisma.fuelLog.count();
@@ -306,10 +324,11 @@ export class BatchImportService {
 
       // 1. Detect header row by scanning rows 1..10 for key column names
       let headerRowIndex = 1;
-      const colMap = {
+      const colMap: Record<string, number> = {
         no: 1,
         unitCode: 2,
         category: 3,
+        type: 0,
         date: 4,
         jam: 5,
         hm: 6,
@@ -343,6 +362,7 @@ export class BatchImportService {
             if (t === 'NO' || t === 'NO.') colMap.no = h.col;
             else if (t.includes('UNIT') || t === 'WS' || t === 'EQUIPMENT') colMap.unitCode = h.col;
             else if (t.includes('KATEGORI') || t.includes('CATEGORY')) colMap.category = h.col;
+            else if (t === 'TYPE' || t.includes('MODEL') || t.includes('TIPE')) colMap.type = h.col;
             else if (t.includes('TANGGAL') || t.includes('DATE') || t.includes('TGL')) colMap.date = h.col;
             else if (t.includes('JAM MASUK') || (t.includes('JAM') && !t.includes('SELESAI')) || t.includes('TIME')) colMap.jam = h.col;
             else if (t === 'HM' || t.includes('HOUR METER') || t.includes('HOUR')) colMap.hm = h.col;
@@ -369,6 +389,7 @@ export class BatchImportService {
           const rawNo = this.extractCellValue(row.getCell(colMap.no));
           const rawUnitCode = String(this.extractCellValue(row.getCell(colMap.unitCode)) || '').trim();
           const rawCategory = String(this.extractCellValue(row.getCell(colMap.category)) || '').trim().toUpperCase();
+          const rawType = colMap.type ? String(this.extractCellValue(row.getCell(colMap.type)) || '').trim().toUpperCase() : '';
           const rawDate = this.extractCellValue(row.getCell(colMap.date));
           const rawJam = this.extractCellValue(row.getCell(colMap.jam));
           const rawHm = parseFloat(this.extractCellValue(row.getCell(colMap.hm))) || 0;
@@ -397,15 +418,36 @@ export class BatchImportService {
           }
           const jamStr = this.parseExcelTime(rawJam);
 
-          // Category mapping
-          const mappedCategory = this.unitCategoryMap[rawCategory] || 'PRODUKSI';
+          // Category and Type resolution
+          let finalCategory = 'PRODUKSI';
+          let finalType = 'DUMP_TRUCK';
+
+          const knownOperationalCategories = ['PRODUKSI', 'SUPPORT', 'CONTRACTOR', 'PLANT SERVICE', 'PLANT', 'PENGISIAN', 'SALDO AWAL'];
+          const knownVehicleTypes = ['DOUBLE_TRAILER', 'DOUBLE TRAILER', 'DUMP_TRUCK', 'DUMP TRUCK', 'SUPPORT_VEHICLE', 'SUPPORT VEHICLE', 'LIGHT_VEHICLE', 'LIGHT VEHICLE', 'HEAVY_EQUIPMENT', 'HEAVY EQUIPMENT', 'GENERATOR', 'STORAGE_TANK'];
+
+          if (rawType) {
+            const normType = String(rawType).trim().toUpperCase().replace(/\s+/g, '_');
+            finalType = (this.unitCategoryMap as any)[rawType] || normType;
+            finalCategory = rawCategory === 'PLANT' ? 'PLANT SERVICE' : (rawCategory || BatchImportService.deduceCategoryFromUnitCode(rawUnitCode));
+          } else if (knownOperationalCategories.includes(rawCategory)) {
+            finalCategory = rawCategory === 'PLANT' ? 'PLANT SERVICE' : rawCategory;
+            finalType = BatchImportService.deduceTypeFromUnitCode(rawUnitCode);
+          } else if (knownVehicleTypes.includes(rawCategory) || this.unitCategoryMap[rawCategory]) {
+            finalType = this.unitCategoryMap[rawCategory] || rawCategory;
+            finalCategory = BatchImportService.deduceCategoryFromUnitCode(rawUnitCode);
+          } else {
+            finalCategory = BatchImportService.deduceCategoryFromUnitCode(rawUnitCode);
+            finalType = BatchImportService.deduceTypeFromUnitCode(rawUnitCode);
+          }
+
           const unitCodeKey = rawUnitCode.toUpperCase();
 
           parsedLogs.push({
             no: parseInt(String(rawNo), 10) || report.totalRowsScanned,
             unitCodeKey,
             rawUnitCode,
-            category: mappedCategory,
+            category: finalCategory,
+            type: finalType,
             dateStr,
             jamStr,
             currentHm: rawHm,
@@ -430,7 +472,7 @@ export class BatchImportService {
     }
 
     // Process all identified units: track chronologically latest readings
-    const distinctUnitsToEnsure = new Map<string, { unitCode: string; category: string; lastKm: number; lastHm: number; orderKey: string }>();
+    const distinctUnitsToEnsure = new Map<string, { unitCode: string; category: string; type: string; lastKm: number; lastHm: number; orderKey: string }>();
     for (const item of parsedLogs) {
       const orderKey = `${item.dateStr}_${item.jamStr}_${String(item.no).padStart(6, '0')}`;
       const existing = distinctUnitsToEnsure.get(item.unitCodeKey);
@@ -438,6 +480,7 @@ export class BatchImportService {
         distinctUnitsToEnsure.set(item.unitCodeKey, {
           unitCode: item.rawUnitCode,
           category: item.category,
+          type: item.type,
           lastKm: item.currentKm,
           lastHm: item.currentHm,
           orderKey,
@@ -457,6 +500,7 @@ export class BatchImportService {
             data: {
               unitCode: uData.unitCode,
               category: uData.category,
+              type: uData.type,
               lastKm: uData.lastKm,
               lastHm: uData.lastHm,
               isActive: true,
@@ -465,6 +509,7 @@ export class BatchImportService {
           unitMap.set(codeKey, {
             id: created.id,
             category: created.category,
+            type: (created as any).type,
             lastKm: created.lastKm,
             lastHm: created.lastHm,
           });
@@ -521,6 +566,7 @@ export class BatchImportService {
           tankId: defaultTank!.id,
           unitCode: item.rawUnitCode,
           category: item.category,
+          type: item.type || 'DUMP_TRUCK',
           dateStr: item.dateStr,
           jamStr: item.jamStr,
           previousHm: prevHm,
@@ -638,7 +684,7 @@ export class BatchImportService {
 
     const rowsToProcess: {
       unitCode: string;
-      category: string;
+      category: UnitCategory;
       plateNumber?: string;
       makeModel?: string;
       lastKm: number;
@@ -670,7 +716,7 @@ export class BatchImportService {
 
       report.totalRowsScanned++;
 
-      const mappedCategory = this.unitCategoryMap[rawCategory] || 'PRODUKSI';
+      const mappedCategory = this.unitCategoryMap[rawCategory] || UnitCategory.DUMP_TRUCK;
 
       rowsToProcess.push({
         unitCode: rawUnitCode,

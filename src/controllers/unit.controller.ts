@@ -14,11 +14,11 @@ export class UnitController {
 
       if (search) {
         where.OR = [
-          { unitCode: { contains: search as string } },
-          { plateNumber: { contains: search as string } },
-          { makeModel: { contains: search as string } },
-          { type: { contains: search as string } },
-          { category: { contains: search as string } },
+          { unitCode: { contains: search as string, mode: 'insensitive' } },
+          { plateNumber: { contains: search as string, mode: 'insensitive' } },
+          { makeModel: { contains: search as string, mode: 'insensitive' } },
+          { category: { contains: search as string, mode: 'insensitive' } },
+          { type: { contains: search as string, mode: 'insensitive' } },
         ];
       }
 
@@ -81,7 +81,7 @@ export class UnitController {
           unitCode,
           plateNumber,
           category: category || 'PRODUKSI',
-          type: type || 'DUMP_TRUCK',
+          type: type || (unitCode.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
           makeModel,
           lastKm: lastKm || 0,
           lastHm: lastHm || 0,
@@ -119,8 +119,8 @@ export class UnitController {
         where: { id },
         data: {
           plateNumber,
-          category,
-          type,
+          category: category !== undefined ? category : oldUnit.category,
+          type: type !== undefined ? type : (oldUnit as any).type,
           makeModel,
           lastKm: lastKm !== undefined ? lastKm : oldUnit.lastKm,
           lastHm: lastHm !== undefined ? lastHm : oldUnit.lastHm,
