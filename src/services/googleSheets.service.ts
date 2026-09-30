@@ -175,7 +175,7 @@ export class GoogleSheetsService {
       // Check headers in row 1
       const checkRes = await sheets.spreadsheets.values.get({
         spreadsheetId: config.googleSheets.spreadsheetId,
-        range: `'${targetSheetName}'!A1:O1`,
+        range: `'${targetSheetName}'!A1:P1`,
       });
 
       if (!checkRes.data.values || checkRes.data.values.length === 0) {
@@ -183,6 +183,7 @@ export class GoogleSheetsService {
           'NO',
           'NO UNIT',
           'KATEGORI',
+          'TIPE',
           'DATE',
           'JAM',
           'HM',
@@ -199,7 +200,7 @@ export class GoogleSheetsService {
 
         await sheets.spreadsheets.values.update({
           spreadsheetId: config.googleSheets.spreadsheetId,
-          range: `'${targetSheetName}'!A1:O1`,
+          range: `'${targetSheetName}'!A1:P1`,
           valueInputOption: 'USER_ENTERED',
           requestBody: { values: [headers] },
         });
@@ -217,7 +218,7 @@ export class GoogleSheetsService {
                       startRowIndex: 0,
                       endRowIndex: 1,
                       startColumnIndex: 0,
-                      endColumnIndex: 15,
+                      endColumnIndex: 16,
                     },
                     cell: {
                       userEnteredFormat: {
@@ -250,10 +251,10 @@ export class GoogleSheetsService {
 
   /**
    * Applies standard column formatting across the specified sheet tab:
-   * - DATE (Col D / Index 3): yyyy-mm-dd, LEFT aligned
-   * - JAM (Col E / Index 4): hh:mm, LEFT aligned
-   * - HM, KM, QTY OUT (Cols F..H / Index 5..8): #,##0.00, RIGHT aligned
-   * - FUEL IN, TOTAL OUT, STOCK AKHIR, TOTAL IN (Cols K..N / Index 10..14): #,##0.00, RIGHT aligned
+   * - DATE (Col E / Index 4): yyyy-mm-dd, LEFT aligned
+   * - JAM (Col F / Index 5): hh:mm, LEFT aligned
+   * - HM, KM, QTY OUT (Cols G..I / Index 6..9): #,##0.00, RIGHT aligned
+   * - FUEL IN, TOTAL OUT, STOCK AKHIR, TOTAL IN (Cols L..O / Index 11..15): #,##0.00, RIGHT aligned
    * - Arial 10pt styling to perfectly match template tabs (JANUARI - AGUSTUS 2026)
    */
   static async applySheetFormatting(sheets: any, targetSheetName: string) {
@@ -265,14 +266,14 @@ export class GoogleSheetsService {
         spreadsheetId: config.googleSheets.spreadsheetId,
         requestBody: {
           requests: [
-            // Format Col D (DATE): yyyy-mm-dd
+            // Format Col E (DATE): yyyy-mm-dd
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1, // Row 2 onwards
-                  startColumnIndex: 3,
-                  endColumnIndex: 4,
+                  startColumnIndex: 4,
+                  endColumnIndex: 5,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -291,14 +292,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Col E (JAM): hh:mm
+            // Format Col F (JAM): hh:mm
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
-                  startColumnIndex: 4,
-                  endColumnIndex: 5,
+                  startColumnIndex: 5,
+                  endColumnIndex: 6,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -317,14 +318,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Cols F..H (HM, KM, QTY OUT): #,##0.00
+            // Format Cols G..I (HM, KM, QTY OUT): #,##0.00
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
-                  startColumnIndex: 5,
-                  endColumnIndex: 8,
+                  startColumnIndex: 6,
+                  endColumnIndex: 9,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -343,14 +344,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Cols K..N (FUEL IN, TOTAL OUT, STOCK, TOTAL IN): #,##0.00
+            // Format Cols L..O (FUEL IN, TOTAL OUT, STOCK, TOTAL IN): #,##0.00
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
-                  startColumnIndex: 10,
-                  endColumnIndex: 14,
+                  startColumnIndex: 11,
+                  endColumnIndex: 15,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -369,14 +370,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.numberFormat,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Cols A..C (NO, UNIT, KATEGORI): Arial 10pt LEFT
+            // Format Cols A..D (NO, UNIT, KATEGORI, TIPE): Arial 10pt LEFT
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
                   startColumnIndex: 0,
-                  endColumnIndex: 3,
+                  endColumnIndex: 4,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -391,14 +392,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Cols I..J (SHIFT, OPERATOR): Arial 10pt LEFT
+            // Format Cols J..K (SHIFT, OPERATOR): Arial 10pt LEFT
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
-                  startColumnIndex: 8,
-                  endColumnIndex: 10,
+                  startColumnIndex: 9,
+                  endColumnIndex: 11,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -413,14 +414,14 @@ export class GoogleSheetsService {
                 fields: 'userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
               },
             },
-            // Format Col O (FUELMAN): Arial 10pt LEFT
+            // Format Col P (FUELMAN): Arial 10pt LEFT
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: 1,
-                  startColumnIndex: 14,
-                  endColumnIndex: 15,
+                  startColumnIndex: 15,
+                  endColumnIndex: 16,
                 },
                 cell: {
                   userEnteredFormat: {
@@ -446,8 +447,8 @@ export class GoogleSheetsService {
 
   /**
    * Automatically sorts rows in the specified sheet tab chronologically:
-   * 1. DATE (Column D / index 3) ASCENDING
-   * 2. JAM (Column E / index 4) ASCENDING
+   * 1. DATE (Column E / index 4) ASCENDING
+   * 2. JAM (Column F / index 5) ASCENDING
    * 3. NO (Column A / index 0) ASCENDING
    */
   static async sortSheetByDateAndJam(sheets: any, sheetTitle: string) {
@@ -476,11 +477,11 @@ export class GoogleSheetsService {
                   sheetId,
                   startRowIndex: 1, // Skip row 1 (Header row)
                   startColumnIndex: 0,
-                  endColumnIndex: 15,
+                  endColumnIndex: 16,
                 },
                 sortSpecs: [
-                  { dimensionIndex: 3, sortOrder: 'ASCENDING' }, // DATE (Col D)
-                  { dimensionIndex: 4, sortOrder: 'ASCENDING' }, // JAM (Col E)
+                  { dimensionIndex: 4, sortOrder: 'ASCENDING' }, // DATE (Col E)
+                  { dimensionIndex: 5, sortOrder: 'ASCENDING' }, // JAM (Col F)
                   { dimensionIndex: 0, sortOrder: 'ASCENDING' }, // NO (Col A)
                 ],
               },
@@ -515,6 +516,7 @@ export class GoogleSheetsService {
       data.no,
       data.unitCode,
       data.category,
+      data.type || 'DUMP_TRUCK',
       this.normalizeDate(data.date),
       this.normalizeJam(data.jam),
       data.hm,
@@ -553,7 +555,7 @@ export class GoogleSheetsService {
 
         await sheets.spreadsheets.values.append({
           spreadsheetId: config.googleSheets.spreadsheetId,
-          range: `'${targetSheet}'!A:O`,
+          range: `'${targetSheet}'!A:P`,
           valueInputOption: 'USER_ENTERED',
           insertDataOption: 'OVERWRITE',
           requestBody: {
@@ -614,6 +616,7 @@ export class GoogleSheetsService {
       l.no,
       l.unitCode,
       l.category,
+      l.type || 'DUMP_TRUCK',
       this.normalizeDate(l.dateStr),
       this.normalizeJam(l.jamStr),
       l.currentHm,
@@ -632,7 +635,7 @@ export class GoogleSheetsService {
       // Clear data below header row to prevent duplicate rows during full month resync
       await sheets.spreadsheets.values.clear({
         spreadsheetId: config.googleSheets.spreadsheetId,
-        range: `'${targetSheet}'!A2:O`,
+        range: `'${targetSheet}'!A2:P`,
       });
 
       // Append in batches of 500
@@ -641,7 +644,7 @@ export class GoogleSheetsService {
         const chunk = rows.slice(i, i + chunkSize);
         await sheets.spreadsheets.values.append({
           spreadsheetId: config.googleSheets.spreadsheetId,
-          range: `'${targetSheet}'!A:O`,
+          range: `'${targetSheet}'!A:P`,
           valueInputOption: 'USER_ENTERED',
           insertDataOption: 'OVERWRITE',
           requestBody: {
@@ -703,6 +706,7 @@ export class GoogleSheetsService {
       l.no,
       l.unitCode,
       l.category,
+      l.type || 'DUMP_TRUCK',
       this.normalizeDate(l.dateStr),
       this.normalizeJam(l.jamStr),
       l.currentHm,
@@ -720,7 +724,7 @@ export class GoogleSheetsService {
     try {
       await sheets.spreadsheets.values.clear({
         spreadsheetId: config.googleSheets.spreadsheetId,
-        range: `'${masterSheet}'!A2:O`,
+        range: `'${masterSheet}'!A2:P`,
       });
 
       const chunkSize = 500;
@@ -728,7 +732,7 @@ export class GoogleSheetsService {
         const chunk = rows.slice(i, i + chunkSize);
         await sheets.spreadsheets.values.append({
           spreadsheetId: config.googleSheets.spreadsheetId,
-          range: `'${masterSheet}'!A:O`,
+          range: `'${masterSheet}'!A:P`,
           valueInputOption: 'USER_ENTERED',
           insertDataOption: 'OVERWRITE',
           requestBody: {

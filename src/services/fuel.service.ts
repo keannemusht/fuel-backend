@@ -317,6 +317,7 @@ export class FuelService {
           tankId: tank.id,
           unitCode: unit.unitCode,
           category: unit.category,
+          type: unit.type,
           dateStr,
           jamStr,
           previousKm,
@@ -359,11 +360,12 @@ export class FuelService {
         },
       });
 
-      // 11. Prepare Google Sheets 15-Column Row Payload
+      // 11. Prepare Google Sheets 16-Column Row Payload
       const spreadsheetData: SpreadsheetRowData = {
         no: docketId,
         unitCode: unit.unitCode,
         category: unit.category,
+        type: unit.type,
         date: dateStr,
         jam: jamStr,
         hm: currentHm,
@@ -546,7 +548,8 @@ export class FuelService {
         unit = await tx.unit.create({
           data: {
             unitCode: 'PENGISIAN',
-            category: UnitCategory.DUMP_TRUCK,
+            category: 'PENGISIAN',
+            type: 'PENGISIAN',
             lastKm: 0,
             lastHm: 0,
             isActive: true,
@@ -577,7 +580,7 @@ export class FuelService {
         ? `Penerimaan BBM Supplier / Refill Tangki: ${notes.trim()}`
         : 'Penerimaan BBM Supplier / Refill Tangki';
 
-      // 5. Create FuelLog record matching the 15-column format
+      // 5. Create FuelLog record matching the 16-column format
       const fuelLog = await tx.fuelLog.create({
         data: {
           logNumber,
@@ -587,6 +590,7 @@ export class FuelService {
           tankId: tank.id,
           unitCode: 'PENGISIAN',
           category: unit.category,
+          type: unit.type || 'PENGISIAN',
           dateStr,
           jamStr,
           previousKm: 0,
@@ -619,11 +623,12 @@ export class FuelService {
         },
       });
 
-      // 7. Prepare Google Sheets 15-Column Row Payload
+      // 7. Prepare Google Sheets 16-Column Row Payload
       const spreadsheetData: SpreadsheetRowData = {
         no: docketId,
         unitCode: 'PENGISIAN',
         category: unit.category,
+        type: unit.type || 'PENGISIAN',
         date: dateStr,
         jam: jamStr,
         hm: 0,
@@ -736,6 +741,7 @@ export class FuelService {
         id: true,
         unitCode: true,
         category: true,
+        type: true,
         lastKm: true,
         lastHm: true,
         isActive: true,
@@ -1072,6 +1078,7 @@ export class FuelService {
           tankId: tank.id,
           unitCode: unit.unitCode,
           category: unit.category,
+          type: unit.type,
           dateStr,
           jamStr: jamNormalized,
           previousKm,
@@ -1129,11 +1136,12 @@ export class FuelService {
         },
       });
 
-      // 11. Prepare Google Sheets 15-Column Row Payload
+      // 11. Prepare Google Sheets 16-Column Row Payload
       const spreadsheetData: SpreadsheetRowData = {
         no: docketId,
         unitCode: unit.unitCode,
         category: unit.category,
+        type: unit.type,
         date: dateStr,
         jam: jamNormalized,
         hm: currentHm,
@@ -1406,7 +1414,8 @@ export class FuelService {
       unit = await prisma.unit.create({
         data: {
           unitCode: rawUnitCode,
-          category: (data.category as UnitCategory) || UnitCategory.DUMP_TRUCK,
+          category: data.category || 'PRODUKSI',
+          type: data.type || 'DUMP_TRUCK',
           lastKm: parseFloat(data.currentKm) || 0,
           lastHm: parseFloat(data.currentHm) || 0,
         },
@@ -1504,7 +1513,8 @@ export class FuelService {
         fuelmanId: fuelmanId!,
         tankId: tankId!,
         unitCode: rawUnitCode,
-        category: (data.category as UnitCategory) || unit.category,
+        category: data.category || unit.category,
+        type: data.type || unit.type || 'DUMP_TRUCK',
         dateStr,
         jamStr,
         previousHm: prevHm,
@@ -1549,6 +1559,7 @@ export class FuelService {
       no: log.no,
       unitCode: log.unitCode,
       category: log.category,
+      type: log.type,
       date: dateStr,
       jam: jamStr,
       hm: currentHm,
@@ -1619,6 +1630,7 @@ export class FuelService {
     const updateData: any = {};
     if (data.unitCode !== undefined) updateData.unitCode = String(data.unitCode).trim();
     if (data.category !== undefined) updateData.category = data.category;
+    if (data.type !== undefined) updateData.type = data.type;
     if (data.dateStr !== undefined) updateData.dateStr = data.dateStr;
     if (data.jamStr !== undefined) updateData.jamStr = data.jamStr;
     if (data.currentKm !== undefined) updateData.currentKm = parseFloat(data.currentKm) || 0;

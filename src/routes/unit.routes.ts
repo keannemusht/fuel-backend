@@ -12,7 +12,8 @@ const createUnitSchema = z.object({
   body: z.object({
     unitCode: z.string().min(2, 'Unit Code is required'),
     plateNumber: z.string().optional(),
-    category: z.nativeEnum(UnitCategory),
+    category: z.string().default('PRODUKSI'),
+    type: z.string().default('DUMP_TRUCK'),
     makeModel: z.string().optional(),
     lastKm: z.number().min(0).optional(),
     lastHm: z.number().min(0).optional(),
@@ -22,7 +23,8 @@ const createUnitSchema = z.object({
 const updateUnitSchema = z.object({
   body: z.object({
     plateNumber: z.string().optional(),
-    category: z.nativeEnum(UnitCategory).optional(),
+    category: z.string().optional(),
+    type: z.string().optional(),
     makeModel: z.string().optional(),
     lastKm: z.number().min(0).optional(),
     lastHm: z.number().min(0).optional(),

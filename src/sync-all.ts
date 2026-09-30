@@ -19,6 +19,7 @@ async function syncAllExistingLogs() {
       no: log.no,
       unitCode: log.unitCode,
       category: log.category,
+      type: log.type,
       date: log.dateStr,
       jam: log.jamStr,
       hm: log.currentHm,

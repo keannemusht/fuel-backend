@@ -15,11 +15,10 @@ enum Role {
 }
 
 enum UnitCategory {
-  HEAVY_EQUIPMENT
-  DUMP_TRUCK
-  SUPPORT_VEHICLE
-  GENERATOR
-  LIGHT_VEHICLE
+  PRODUKSI
+  SUPPORT
+  CONTRACTOR
+  PLANT_SERVICE
 }
 
 enum SyncStatus {
@@ -59,7 +58,8 @@ model Unit {
   id          String       @id @default(uuid())
   unitCode    String       @unique
   plateNumber String?
-  category    UnitCategory @default(DUMP_TRUCK)
+  category    String       @default("PRODUKSI") // PRODUKSI, SUPPORT, CONTRACTOR, PLANT SERVICE
+  type        String       @default("DUMP_TRUCK") // DUMP_TRUCK, SUPPORT_VEHICLE, LIGHT_VEHICLE, EXCAVATOR, etc.
   makeModel   String?
   lastKm      Float        @default(0.0)
   lastHm      Float        @default(0.0)
@@ -71,6 +71,7 @@ model Unit {
 
   @@index([unitCode])
   @@index([category])
+  @@index([type])
 }
 
 model StorageTank {
@@ -99,9 +100,10 @@ model FuelLog {
   fuelmanId        String
   tankId           String
   
-  // 15 Spreadsheet / Operational Columns
+  // 16 Operational Columns
   unitCode         String      // NO UNIT
-  category         String      // KATEGORI
+  category         String      // KATEGORI (PRODUKSI, SUPPORT, CONTRACTOR, PLANT SERVICE, PENGISIAN)
+  type             String      @default("DUMP_TRUCK") // TIPE (DUMP_TRUCK, SUPPORT_VEHICLE, etc.)
   dateStr          String      // DATE (YYYY-MM-DD)
   jamStr           String      // JAM (HH:mm:ss)
   previousHm       Float       // Baseline HM before this dispense

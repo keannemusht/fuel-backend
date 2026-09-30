@@ -31,7 +31,7 @@ export class ExcelService {
     });
 
     // 1. Title Banner
-    sheet.mergeCells('A1:O1');
+    sheet.mergeCells('A1:P1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = 'BATARA INDUSTRIAL FUEL DISPENSING & MONITORING REPORT';
     titleCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -44,7 +44,7 @@ export class ExcelService {
     sheet.getRow(1).height = 30;
 
     // 2. Subtitle / Filter Info
-    sheet.mergeCells('A2:O2');
+    sheet.mergeCells('A2:P2');
     const subCell = sheet.getCell('A2');
     subCell.value = `FILTER: DATE = ${filter?.dateStr || 'ALL'} | SHIFT = ${filter?.shift || 'ALL'} | EXPORTED AT: ${new Date().toLocaleString()}`;
     subCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FFCBD5E1' } };
@@ -63,6 +63,7 @@ export class ExcelService {
       { header: 'NO', key: 'no', width: 8 },
       { header: 'NO UNIT', key: 'unitCode', width: 16 },
       { header: 'KATEGORI', key: 'category', width: 20 },
+      { header: 'TIPE', key: 'type', width: 18 },
       { header: 'DATE', key: 'dateStr', width: 14 },
       { header: 'JAM', key: 'jamStr', width: 12 },
       { header: 'HM', key: 'currentHm', width: 14 },
@@ -113,6 +114,7 @@ export class ExcelService {
         log.no,
         log.unitCode,
         log.category,
+        log.type,
         log.dateStr,
         log.jamStr,
         log.currentHm,
@@ -148,9 +150,9 @@ export class ExcelService {
         }
 
         // Alignments & Number formatting
-        if ([1, 4, 5, 9].includes(colNumber)) {
+        if ([1, 5, 6, 10].includes(colNumber)) {
           cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        } else if ([6, 7, 8, 11, 12, 13, 14].includes(colNumber)) {
+        } else if ([7, 8, 9, 12, 13, 14, 15].includes(colNumber)) {
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
           cell.numFmt = '#,##0.00';
         } else {
@@ -171,6 +173,7 @@ export class ExcelService {
       '',
       '',
       '',
+      '',
       totalQtyOut,
       '',
       '',
@@ -182,7 +185,7 @@ export class ExcelService {
     ];
     summaryRow.height = 26;
 
-    sheet.mergeCells(`A${currentRowIdx}:G${currentRowIdx}`);
+    sheet.mergeCells(`A${currentRowIdx}:H${currentRowIdx}`);
     const sumTotalLabel = sheet.getCell(`A${currentRowIdx}`);
     sumTotalLabel.value = 'TOTAL REKAPITULASI';
     sumTotalLabel.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -198,7 +201,7 @@ export class ExcelService {
         top: { style: 'medium', color: { argb: 'FF000000' } },
         bottom: { style: 'double', color: { argb: 'FF000000' } },
       };
-      if ([8, 11, 12, 13, 14].includes(colNumber)) {
+      if ([9, 12, 13, 14, 15].includes(colNumber)) {
         cell.numFmt = '#,##0.00';
       }
     });

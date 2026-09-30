@@ -9,7 +9,7 @@ import { AuditAction, UnitCategory } from '@prisma/client';
 export class UnitController {
   static async getUnits(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { search, category, isActive } = req.query;
+      const { search, category, type, isActive } = req.query;
       const where: any = {};
 
       if (search) {
@@ -17,11 +17,17 @@ export class UnitController {
           { unitCode: { contains: search as string } },
           { plateNumber: { contains: search as string } },
           { makeModel: { contains: search as string } },
+          { type: { contains: search as string } },
+          { category: { contains: search as string } },
         ];
       }
 
       if (category) {
-        where.category = category as UnitCategory;
+        where.category = category as string;
+      }
+
+      if (type) {
+        where.type = type as string;
       }
 
       if (isActive !== undefined) {
@@ -60,7 +66,7 @@ export class UnitController {
 
   static async createUnit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { unitCode, plateNumber, category, makeModel, lastKm, lastHm } = req.body;
+      const { unitCode, plateNumber, category, type, makeModel, lastKm, lastHm } = req.body;
 
       const existing = await prisma.unit.findUnique({
         where: { unitCode },
@@ -74,7 +80,8 @@ export class UnitController {
         data: {
           unitCode,
           plateNumber,
-          category,
+          category: category || 'PRODUKSI',
+          type: type || 'DUMP_TRUCK',
           makeModel,
           lastKm: lastKm || 0,
           lastHm: lastHm || 0,
@@ -101,7 +108,7 @@ export class UnitController {
   static async updateUnit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const id = req.params.id as string;
-      const { plateNumber, category, makeModel, lastKm, lastHm, isActive } = req.body;
+      const { plateNumber, category, type, makeModel, lastKm, lastHm, isActive } = req.body;
 
       const oldUnit = await prisma.unit.findUnique({ where: { id } });
       if (!oldUnit) {
@@ -113,6 +120,7 @@ export class UnitController {
         data: {
           plateNumber,
           category,
+          type,
           makeModel,
           lastKm: lastKm !== undefined ? lastKm : oldUnit.lastKm,
           lastHm: lastHm !== undefined ? lastHm : oldUnit.lastHm,

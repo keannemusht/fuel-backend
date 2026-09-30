@@ -17,6 +17,7 @@ export interface SpreadsheetRowData {
   no: number | string;
   unitCode: string;
   category: string;
+  type?: string;
   date: string;
   jam: string;
   hm: number;
