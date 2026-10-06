@@ -37,12 +37,28 @@ const updateTankSchema = z.object({
   }),
 });
 
+const transferStockSchema = z.object({
+  body: z.object({
+    sourceTankId: z.string().min(1, 'Source tank ID is required'),
+    targetTankId: z.string().min(1, 'Target tank ID is required'),
+    volumeLiters: z.number().positive('Volume must be greater than 0'),
+    flowAwal: z.number().min(0).optional(),
+    flowAkhir: z.number().min(0).optional(),
+    driverName: z.string().optional(),
+    notes: z.string().optional(),
+    dateStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date format must be YYYY-MM-DD').optional(),
+    jamStr: z.string().optional(),
+  }),
+});
+
 router.use(authenticateJwt);
 
 router.get('/', TankController.getTanks);
+router.get('/transfers', TankController.getTransfers);
+router.post('/transfer', requireRole([Role.ADMIN, Role.MANAGEMENT, Role.FUELMAN]), validateRequest(transferStockSchema), TankController.transferStock);
 router.post('/', requireRole([Role.ADMIN, Role.MANAGEMENT]), validateRequest(createTankSchema), TankController.createTank);
 router.put('/:id', requireRole([Role.ADMIN, Role.MANAGEMENT]), validateRequest(updateTankSchema), TankController.updateTank);
 router.delete('/:id', requireRole([Role.ADMIN, Role.MANAGEMENT]), TankController.deleteTank);
-router.post('/:id/refill', requireRole([Role.ADMIN, Role.MANAGEMENT]), validateRequest(refillTankSchema), TankController.refillTank);
+router.post('/:id/refill', requireRole([Role.ADMIN, Role.MANAGEMENT, Role.FUELMAN]), validateRequest(refillTankSchema), TankController.refillTank);
 
 export default router;

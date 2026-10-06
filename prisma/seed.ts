@@ -44,26 +44,40 @@ async function main() {
     },
   });
 
-  // 5. Create Default Storage Tanks
+  // 5. Create Authentic Operational Storage Tanks
   const mainTank = await prisma.storageTank.create({
     data: {
-      tankCode: 'TANK-MAIN-01',
-      name: 'Main Storage Tank 01 (Solar B35)',
-      capacityLiters: 50000.0,
-      currentStockLiters: 45000.0,
+      tankCode: 'MAIN_SENYIUR',
+      name: 'Main Tank Senyiur (Solar B35)',
+      capacityLiters: 40000.0,
+      currentStockLiters: 44655.0,
       minStockAlertLiters: 5000.0,
       fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
+      tankType: 'STATIONARY',
     },
   });
 
-  const reserveTank = await prisma.storageTank.create({
+  const ft101 = await prisma.storageTank.create({
     data: {
-      tankCode: 'TANK-RES-02',
-      name: 'Reserve Storage Tank 02 (Solar B35)',
-      capacityLiters: 30000.0,
-      currentStockLiters: 28000.0,
-      minStockAlertLiters: 3000.0,
+      tankCode: 'FT_101',
+      name: 'Fuel Truck 101',
+      capacityLiters: 20000.0,
+      currentStockLiters: 3850.0,
+      minStockAlertLiters: 2000.0,
       fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
+      tankType: 'MOBILE_TRUCK',
+    },
+  });
+
+  const ft102 = await prisma.storageTank.create({
+    data: {
+      tankCode: 'FT_102',
+      name: 'Fuel Truck 102',
+      capacityLiters: 20000.0,
+      currentStockLiters: 0.0,
+      minStockAlertLiters: 2000.0,
+      fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
+      tankType: 'MOBILE_TRUCK',
     },
   });
 
@@ -95,7 +109,7 @@ async function main() {
   console.log('----------------------------------------------------');
   console.log(`1. Admin:   username: "${admin.username}"   | password: "admin123" | role: ${admin.role}`);
   console.log(`2. Fuelman: username: "${fuelman.username}" | password: "fuelman123" | role: ${fuelman.role}`);
-  console.log(`3. Tanks:   ${mainTank.tankCode} (${mainTank.capacityLiters} L), ${reserveTank.tankCode} (${reserveTank.capacityLiters} L)`);
+  console.log(`3. Tanks:   ${mainTank.tankCode} (${mainTank.capacityLiters} L), ${ft101.tankCode} (${ft101.capacityLiters} L), ${ft102.tankCode} (${ft102.capacityLiters} L)`);
   console.log(`4. Units:   ${initialUnits.map((u) => u.unitCode).join(', ')}`);
   console.log('----------------------------------------------------');
 }

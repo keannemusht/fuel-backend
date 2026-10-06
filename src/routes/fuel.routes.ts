@@ -13,8 +13,9 @@ const recordDispenseSchema = z.object({
   body: z.object({
     unitId: z.string().min(1, 'Unit selection is required'),
     tankId: z.string().min(1, 'Storage tank selection is required'),
-    currentKm: z.number().min(0, 'Current KM must be positive'),
-    currentHm: z.number().min(0, 'Current HM must be positive'),
+    currentKm: z.number().min(0, 'Current KM must be positive').optional(),
+    currentHm: z.number().min(0, 'Current HM must be positive').optional(),
+    currentKwh: z.number().min(0, 'Current KWH must be positive').optional(),
     volumeLiters: z.number().min(0, 'Volume Liters must be non-negative'),
     shift: z.string().min(1, 'Shift identifier is required (e.g. SHIFT 1, SHIFT 2)'),
     operator: z.string().min(1, 'Operator name is required'),
@@ -23,6 +24,11 @@ const recordDispenseSchema = z.object({
     bypassReason: z.string().optional(),
     dateStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date format must be YYYY-MM-DD').optional(),
     jamStr: z.string().optional(),
+    sourceType: z.enum(['FUEL_STATION', 'FUEL_TRUCK']).optional(),
+    flowAwal: z.number().min(0).optional(),
+    flowAkhir: z.number().min(0).optional(),
+    totalisatorQty: z.number().min(0).optional(),
+    doNumber: z.string().optional(),
   }),
 });
 
@@ -30,8 +36,9 @@ const recordBackdateSchema = z.object({
   body: z.object({
     unitId: z.string().min(1, 'Unit selection is required'),
     tankId: z.string().min(1, 'Storage tank selection is required'),
-    currentKm: z.number().min(0, 'Current KM must be positive'),
-    currentHm: z.number().min(0, 'Current HM must be positive'),
+    currentKm: z.number().min(0, 'Current KM must be positive').optional(),
+    currentHm: z.number().min(0, 'Current HM must be positive').optional(),
+    currentKwh: z.number().min(0, 'Current KWH must be positive').optional(),
     volumeLiters: z.number().min(0, 'Volume Liters must be non-negative'),
     shift: z.string().min(1, 'Shift identifier is required (e.g. SHIFT 1, SHIFT 2)'),
     operator: z.string().min(1, 'Operator name is required'),
@@ -41,6 +48,11 @@ const recordBackdateSchema = z.object({
     bypassValidation: z.boolean().optional(),
     bypassReason: z.string().optional(),
     fuelmanName: z.string().optional(),
+    sourceType: z.enum(['FUEL_STATION', 'FUEL_TRUCK']).optional(),
+    flowAwal: z.number().min(0).optional(),
+    flowAkhir: z.number().min(0).optional(),
+    totalisatorQty: z.number().min(0).optional(),
+    doNumber: z.string().optional(),
   }),
 });
 
@@ -54,6 +66,9 @@ const recordInboundSchema = z.object({
     jamStr: z.string().optional(),
     fuelmanName: z.string().optional(),
     notes: z.string().optional(),
+    doNumber: z.string().optional(),
+    flowAwal: z.number().min(0).optional(),
+    flowAkhir: z.number().min(0).optional(),
   }),
 });
 

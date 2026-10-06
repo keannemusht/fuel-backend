@@ -69,17 +69,22 @@ async function syncAllSheetsToDb() {
   console.log('  STARTING DIRECT GOOGLE SHEETS -> PRISMA DB SYNC');
   console.log('=======================================================');
 
-  // 1. Ensure StorageTank exists
-  let defaultTank = await prisma.storageTank.findFirst({ where: { tankCode: 'TANK-MAIN-01' } });
+  // 1. Ensure StorageTank exists (Main Tank Senyiur)
+  let defaultTank = await prisma.storageTank.findFirst({
+    where: {
+      OR: [{ tankCode: 'MAIN_SENYIUR' }, { tankCode: 'TANK-MAIN-01' }],
+    },
+  });
   if (!defaultTank) {
     defaultTank = await prisma.storageTank.create({
       data: {
-        tankCode: 'TANK-MAIN-01',
-        name: 'Main Storage Tank 01 (Solar B35)',
-        capacityLiters: 50000.0,
-        currentStockLiters: 45000.0,
+        tankCode: 'MAIN_SENYIUR',
+        name: 'Main Tank Senyiur (Solar B35)',
+        capacityLiters: 40000.0,
+        currentStockLiters: 44655.0,
         minStockAlertLiters: 5000.0,
         fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
+        tankType: 'STATIONARY',
       },
     });
   }

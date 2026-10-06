@@ -205,4 +205,191 @@ export class TankController {
       next(error);
     }
   }
+
+  static async transferStock(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const {
+        sourceTankId,
+        targetTankId,
+        volumeLiters,
+        flowAwal,
+        flowAkhir,
+        driverName,
+        notes,
+        dateStr: reqDateStr,
+        jamStr: reqJamStr,
+      } = req.body;
+
+      if (sourceTankId === targetTankId) {
+        throw new AppError('Tangki sumber dan tangki tujuan tidak boleh sama.', 422);
+      }
+
+      if (!volumeLiters || volumeLiters <= 0) {
+        throw new AppError('Volume transfer harus lebih dari 0 liter.', 422);
+      }
+
+      const now = new Date();
+      let todayStr: string;
+      let witaTimeStr: string;
+      try {
+        todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Makassar' }).format(now);
+        witaTimeStr = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Makassar',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(now);
+      } catch {
+        todayStr = now.toISOString().split('T')[0];
+        witaTimeStr = now.toTimeString().split(' ')[0].slice(0, 5);
+      }
+
+      const dateStr = reqDateStr || todayStr;
+      const jamStr = (reqJamStr || witaTimeStr).replace(/\./g, ':');
+
+      const result = await prisma.$transaction(async (tx) => {
+        const sourceTank = await tx.storageTank.findUnique({ where: { id: sourceTankId } });
+        if (!sourceTank) throw new AppError('Tangki sumber tidak ditemukan.', 404);
+
+        const targetTank = await tx.storageTank.findUnique({ where: { id: targetTankId } });
+        if (!targetTank) throw new AppError('Tangki tujuan tidak ditemukan.', 404);
+
+        if (sourceTank.currentStockLiters < volumeLiters) {
+          throw new AppError(
+            `Stok di ${sourceTank.name} tidak mencukupi (Tersedia: ${sourceTank.currentStockLiters.toLocaleString()} L, Diminta: ${volumeLiters.toLocaleString()} L).`,
+            422
+          );
+        }
+
+        const newTargetStock = targetTank.currentStockLiters + volumeLiters;
+        if (newTargetStock > targetTank.capacityLiters) {
+          throw new AppError(
+            `Transfer melebihi kapasitas maksimum ${targetTank.name} (${targetTank.capacityLiters.toLocaleString()} L). Sisa ruang tangki: ${(targetTank.capacityLiters - targetTank.currentStockLiters).toLocaleString()} L.`,
+            422
+          );
+        }
+
+        const newSourceStock = parseFloat((sourceTank.currentStockLiters - volumeLiters).toFixed(2));
+        const updatedTargetStock = parseFloat(newTargetStock.toFixed(2));
+
+        // Update tank balances
+        await tx.storageTank.update({
+          where: { id: sourceTankId },
+          data: { currentStockLiters: newSourceStock },
+        });
+
+        await tx.storageTank.update({
+          where: { id: targetTankId },
+          data: { currentStockLiters: updatedTargetStock },
+        });
+
+        // Generate Transfer Number TR-YYYY-MM-DD-0001
+        const datePrefix = `TR-${dateStr}-`;
+        const count = await tx.stockTransfer.count({
+          where: { transferNumber: { startsWith: datePrefix } },
+        });
+        const transferNumber = `${datePrefix}${String(count + 1).padStart(4, '0')}`;
+
+        const transfer = await tx.stockTransfer.create({
+          data: {
+            transferNumber,
+            sourceTankId,
+            targetTankId,
+            sourceTankName: sourceTank.name,
+            targetTankName: targetTank.name,
+            volumeLiters,
+            flowAwal: flowAwal ?? null,
+            flowAkhir: flowAkhir ?? null,
+            dateStr,
+            jamStr,
+            fuelmanId: req.user?.id || 'system',
+            fuelmanName: req.user?.fullName || 'Petugas',
+            driverName: driverName || null,
+            notes: notes || null,
+            status: 'COMPLETED',
+          },
+        });
+
+        // Also create a FuelLog record so it syncs to Google Sheets as "Transfer Stock"
+        let transferUnit = await tx.unit.findUnique({ where: { unitCode: 'TRANSFER_STOCK' } });
+        if (!transferUnit) {
+          transferUnit = await tx.unit.create({
+            data: {
+              unitCode: 'TRANSFER_STOCK',
+              category: 'FUEL_IN',
+              type: 'STORAGE_TANK',
+              makeModel: 'Stock Transfer Inter-Tank',
+              hasHm: false,
+              hasKm: false,
+              hasKwh: false,
+            },
+          });
+        }
+
+        const { docketId, seq } = await (await import('../services/fuel.service.js')).FuelService.generateDocketId(tx, true, dateStr);
+
+        const fuelLog = await tx.fuelLog.create({
+          data: {
+            logNumber: docketId,
+            no: seq,
+            unitId: transferUnit.id,
+            fuelmanId: req.user?.id || 'system',
+            tankId: targetTank.id,
+            unitCode: 'Transfer Stock',
+            category: 'Fuel In',
+            type: 'STORAGE_TANK',
+            dateStr,
+            jamStr,
+            previousKm: 0,
+            currentKm: 0,
+            deltaKm: 0,
+            previousHm: 0,
+            currentHm: 0,
+            deltaHm: 0,
+            volumeLiters: 0,
+            shift: 'SHIFT 1',
+            operator: driverName ? `Transfer: ${driverName}` : `Transfer ${sourceTank.name} -> ${targetTank.name}`,
+            fuelInLiters: volumeLiters,
+            totalFuelOut: 0,
+            stockAkhir: updatedTargetStock,
+            totalFuelIn: volumeLiters,
+            fuelmanName: req.user?.fullName || 'Petugas',
+            sourceType: 'FUEL_TRUCK',
+            flowAwal: flowAwal ?? null,
+            flowAkhir: flowAkhir ?? null,
+            totalisatorQty: flowAkhir && flowAwal ? flowAkhir - flowAwal : volumeLiters,
+            dispensedAt: now,
+          },
+        });
+
+        return { transfer, fuelLog, sourceTank: { ...sourceTank, currentStockLiters: newSourceStock }, targetTank: { ...targetTank, currentStockLiters: updatedTargetStock } };
+      });
+
+      return sendSuccess(res, result, `Transfer ${volumeLiters} L dari ${result.transfer.sourceTankName} ke ${result.transfer.targetTankName} berhasil.`);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getTransfers(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const page = parseInt(req.query.page as string, 10) || 1;
+      const limit = parseInt(req.query.limit as string, 10) || 20;
+      const skip = (page - 1) * limit;
+
+      const [transfers, total] = await Promise.all([
+        prisma.stockTransfer.findMany({
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+        }),
+        prisma.stockTransfer.count(),
+      ]);
+
+      return sendSuccess(res, { transfers, total, page, totalPages: Math.ceil(total / limit) }, 'Stock transfers retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

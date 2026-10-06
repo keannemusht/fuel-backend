@@ -64,6 +64,10 @@ model Unit {
   makeModel   String?
   lastKm      Float     @default(0.0)
   lastHm      Float     @default(0.0)
+  lastKwh     Float     @default(0.0)
+  hasHm       Boolean   @default(true)
+  hasKm       Boolean   @default(true)
+  hasKwh      Boolean   @default(false)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -83,10 +87,13 @@ model StorageTank {
   currentStockLiters  Float    @default(45000.0)
   minStockAlertLiters Float    @default(5000.0)
   fuelType            String   @default("HIGH SPEED DIESEL / SOLAR B35")
+  tankType            String   @default("STATIONARY") // STATIONARY or MOBILE_TRUCK
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   fuelLogs            FuelLog[]
+  outgoingTransfers   StockTransfer[] @relation("SourceTank")
+  incomingTransfers   StockTransfer[] @relation("TargetTank")
 
   @@index([tankCode])
 }
@@ -113,6 +120,9 @@ model FuelLog {
   previousKm       Float       // Baseline KM before this dispense
   currentKm        Float       // KM (Current Odometer)
   deltaKm          Float       // Delta KM
+  previousKwh      Float       @default(0.0)
+  currentKwh       Float       @default(0.0)
+  deltaKwh         Float       @default(0.0)
   volumeLiters     Float       // QTY OUT ( LITER )
   shift            String      // SHIFT (e.g. SHIFT 1 / SHIFT 2 / DAY / NIGHT)
   operator         String      // OPERATOR (Driver / Machine Operator)
@@ -121,6 +131,15 @@ model FuelLog {
   stockAkhir       Float       @default(0.0) // STOCK AKHIR (Remaining tank balance)
   totalFuelIn      Float       @default(0.0) // TOTAL FUEL IN (Cumulative received)
   fuelmanName      String      // FUELMAN (Officer Name)
+
+  // Fuel Truck & Source Mode Tracking
+  sourceType       String      @default("FUEL_STATION") // FUEL_STATION or FUEL_TRUCK
+  flowAwal         Float?
+  flowAkhir        Float?
+  totalisatorQty   Float?
+
+  // Inbound DO Tracking
+  doNumber         String?
 
   // Validation & Safety Flag
   bypassValidation Boolean     @default(false)
@@ -146,6 +165,34 @@ model FuelLog {
   @@index([dateStr])
   @@index([syncStatus])
   @@index([dispensedAt])
+}
+
+model StockTransfer {
+  id               String      @id @default(uuid())
+  transferNumber   String      @unique
+  sourceTankId     String
+  targetTankId     String
+  sourceTankName   String
+  targetTankName   String
+  volumeLiters     Float
+  flowAwal         Float?
+  flowAkhir        Float?
+  dateStr          String
+  jamStr           String
+  fuelmanId        String
+  fuelmanName      String
+  driverName       String?
+  notes            String?
+  status           String      @default("COMPLETED")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  sourceTank       StorageTank @relation("SourceTank", fields: [sourceTankId], references: [id])
+  targetTank       StorageTank @relation("TargetTank", fields: [targetTankId], references: [id])
+
+  @@index([sourceTankId])
+  @@index([targetTankId])
+  @@index([dateStr])
 }
 
 model SyncQueue {

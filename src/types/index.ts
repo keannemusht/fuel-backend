@@ -20,8 +20,8 @@ export interface SpreadsheetRowData {
   type: string;
   date: string;
   jam: string;
-  hm: number;
-  km: number;
+  hm: number | string;
+  km: number | string;
   qtyOut: number;
   shift: string;
   operator: string;
@@ -31,3 +31,4 @@ export interface SpreadsheetRowData {
   totalFuelIn: number;
   fuelman: string;
 }
+

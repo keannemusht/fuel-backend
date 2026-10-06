@@ -43,6 +43,9 @@ async function runTests() {
   console.log(`✓ Updated Unit State: KM=${validDispense.unit.lastKm}, HM=${validDispense.unit.lastHm}`);
   console.log(`✓ Updated Tank Stock: ${validDispense.tank.currentStockLiters} Liters`);
 
+  const unitLastKm = validDispense.unit?.lastKm ?? 100;
+  const unitLastHm = validDispense.unit?.lastHm ?? 50;
+
   // 4. Test Violation: Decreasing Odometer
   console.log('\n[4] Testing Meter Rule 1 Violation (KM Decreasing):');
   try {
@@ -50,8 +53,8 @@ async function runTests() {
       {
         unitId: unit!.id,
         tankId: tank!.id,
-        currentKm: validDispense.unit.lastKm - 50.0, // Decreased!
-        currentHm: validDispense.unit.lastHm + 1.0,
+        currentKm: unitLastKm - 50.0, // Decreased!
+        currentHm: unitLastHm + 1.0,
         volumeLiters: 100.0,
         shift: 'SHIFT 1',
         operator: 'Joko Widodo',
@@ -70,8 +73,8 @@ async function runTests() {
       {
         unitId: unit!.id,
         tankId: tank!.id,
-        currentKm: validDispense.unit.lastKm + 1500.0, // +1500 KM!
-        currentHm: validDispense.unit.lastHm + 5.0,
+        currentKm: unitLastKm + 1500.0, // +1500 KM!
+        currentHm: unitLastHm + 5.0,
         volumeLiters: 100.0,
         shift: 'SHIFT 1',
         operator: 'Joko Widodo',
@@ -90,8 +93,8 @@ async function runTests() {
       {
         unitId: unit!.id,
         tankId: tank!.id,
-        currentKm: validDispense.unit.lastKm + 100.0,
-        currentHm: validDispense.unit.lastHm + 35.0, // +35 Hours!
+        currentKm: unitLastKm + 100.0,
+        currentHm: unitLastHm + 35.0, // +35 Hours!
         volumeLiters: 100.0,
         shift: 'SHIFT 1',
         operator: 'Joko Widodo',

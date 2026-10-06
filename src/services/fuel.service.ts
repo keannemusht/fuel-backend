@@ -9,8 +9,9 @@ import { logger } from '../utils/logger.js';
 export interface CreateFuelDispenseDto {
   unitId: string;
   tankId: string;
-  currentKm: number;
-  currentHm: number;
+  currentKm?: number;
+  currentHm?: number;
+  currentKwh?: number;
   volumeLiters: number;
   shift: string;
   operator: string;
@@ -19,13 +20,19 @@ export interface CreateFuelDispenseDto {
   bypassReason?: string;
   dateStr?: string;
   jamStr?: string;
+  sourceType?: string;
+  flowAwal?: number;
+  flowAkhir?: number;
+  totalisatorQty?: number;
+  doNumber?: string;
 }
 
 export interface CreateBackdateDispenseDto {
   unitId: string;
   tankId: string;
-  currentKm: number;
-  currentHm: number;
+  currentKm?: number;
+  currentHm?: number;
+  currentKwh?: number;
   volumeLiters: number;
   shift: string;
   operator: string;
@@ -35,6 +42,11 @@ export interface CreateBackdateDispenseDto {
   bypassValidation?: boolean;
   bypassReason?: string;
   fuelmanName?: string;
+  sourceType?: string;
+  flowAwal?: number;
+  flowAkhir?: number;
+  totalisatorQty?: number;
+  doNumber?: string;
 }
 
 export interface CreateInboundFuelDto {
@@ -150,6 +162,7 @@ export class FuelService {
           tankId: dto.tankId,
           currentKm: dto.currentKm,
           currentHm: dto.currentHm,
+          currentKwh: dto.currentKwh,
           volumeLiters: dto.volumeLiters,
           shift: dto.shift,
           operator: dto.operator,
@@ -158,6 +171,11 @@ export class FuelService {
           bypassReason: dto.bypassReason,
           dateStr: dto.dateStr,
           jamStr,
+          sourceType: dto.sourceType,
+          flowAwal: dto.flowAwal,
+          flowAkhir: dto.flowAkhir,
+          totalisatorQty: dto.totalisatorQty,
+          doNumber: dto.doNumber,
         },
         currentUser,
         clientMeta
@@ -188,11 +206,18 @@ export class FuelService {
         throw new AppError(`Storage Tank with ID ${tankId} not found`, 404);
       }
 
-      // 3. Delta Meter Calculations
+      // 3. Dynamic Delta Meter Calculations based on unit capability
       const previousKm = unit.lastKm;
       const previousHm = unit.lastHm;
-      const deltaKm = parseFloat((currentKm - previousKm).toFixed(2));
-      const deltaHm = parseFloat((currentHm - previousHm).toFixed(2));
+      const previousKwh = unit.lastKwh || 0;
+
+      const effectiveCurrentKm = unit.hasKm ? (currentKm ?? 0) : 0;
+      const effectiveCurrentHm = unit.hasHm ? (currentHm ?? 0) : 0;
+      const effectiveCurrentKwh = unit.hasKwh ? (dto.currentKwh ?? 0) : 0;
+
+      const deltaKm = unit.hasKm ? parseFloat((effectiveCurrentKm - previousKm).toFixed(2)) : 0;
+      const deltaHm = unit.hasHm ? parseFloat((effectiveCurrentHm - previousHm).toFixed(2)) : 0;
+      const deltaKwh = unit.hasKwh ? parseFloat((effectiveCurrentKwh - previousKwh).toFixed(2)) : 0;
 
       // 4. Strict Validation Rules (unless bypassed)
       if (!bypassValidation) {
@@ -219,63 +244,79 @@ export class FuelService {
           }
         }
 
-        // Absolute Non-Negative Checks
-        if (currentKm < 0) {
-          throw new AppError(
-            `Odometer Validation Failed: Current KM (${currentKm}) cannot be negative.`,
-            422,
-            { currentKm, violation: 'KM_NEGATIVE' }
-          );
+        // Rule 1: Odometer Validation (Only for units with KM tracking)
+        if (unit.hasKm) {
+          if (effectiveCurrentKm < 0) {
+            throw new AppError(
+              `Odometer Validation Failed: Current KM (${effectiveCurrentKm}) cannot be negative.`,
+              422,
+              { currentKm: effectiveCurrentKm, violation: 'KM_NEGATIVE' }
+            );
+          }
+
+          if (previousKm > 0 && effectiveCurrentKm < previousKm) {
+            throw new AppError(
+              `Odometer Validation Failed: Current KM (${effectiveCurrentKm}) cannot be less than last recorded KM (${previousKm}).`,
+              422,
+              { currentKm: effectiveCurrentKm, previousKm, deltaKm, violation: 'KM_DECREASING' }
+            );
+          }
+
+          if (deltaKm > maxAllowedDeltaKm) {
+            throw new AppError(
+              `Odometer Validation Failed: Travel distance of ${deltaKm} KM exceeds maximum allowable limit of ${maxAllowedDeltaKm} KM.`,
+              422,
+              { currentKm: effectiveCurrentKm, previousKm, deltaKm, maxLimitKm: maxAllowedDeltaKm, violation: 'KM_DELTA_EXCEEDED' }
+            );
+          }
         }
 
-        if (currentHm < 0) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be negative.`,
-            422,
-            { currentHm, violation: 'HM_NEGATIVE' }
-          );
+        // Rule 2: Hour Meter Validation (Only for units with HM tracking)
+        if (unit.hasHm) {
+          if (effectiveCurrentHm < 0) {
+            throw new AppError(
+              `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be negative.`,
+              422,
+              { currentHm: effectiveCurrentHm, violation: 'HM_NEGATIVE' }
+            );
+          }
+
+          if (previousHm > 0 && effectiveCurrentHm <= previousHm) {
+            throw new AppError(
+              effectiveCurrentHm === previousHm
+                ? `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be equal to previous recorded HM (${previousHm}). Unit must operate before refuelling.`
+                : `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be less than previous recorded HM (${previousHm}). HM must increase on every refuelling.`,
+              422,
+              { currentHm: effectiveCurrentHm, previousHm, deltaHm, violation: 'HM_NOT_INCREASING' }
+            );
+          }
+
+          if (deltaHm > maxAllowedDeltaHm) {
+            throw new AppError(
+              `Hour Meter Validation Failed: Operating duration of ${deltaHm} Hours exceeds maximum allowable limit of ${maxAllowedDeltaHm} Hours.`,
+              422,
+              { currentHm: effectiveCurrentHm, previousHm, deltaHm, maxLimitHm: maxAllowedDeltaHm, violation: 'HM_DELTA_EXCEEDED' }
+            );
+          }
         }
 
-        // Rule 1: Odometer Validation (Current KM >= Last KM AND Delta KM <= maxAllowedDeltaKm)
-        if (previousKm > 0 && currentKm < previousKm) {
-          throw new AppError(
-            `Odometer Validation Failed: Current KM (${currentKm}) cannot be less than last recorded KM (${previousKm}).`,
-            422,
-            { currentKm, previousKm, deltaKm, violation: 'KM_DECREASING' }
-          );
-        }
+        // Rule 3: KWH Validation (Only for units with KWH tracking like Genset)
+        if (unit.hasKwh) {
+          if (effectiveCurrentKwh < 0) {
+            throw new AppError(
+              `KWH Validation Failed: Current KWH (${effectiveCurrentKwh}) cannot be negative.`,
+              422,
+              { currentKwh: effectiveCurrentKwh, violation: 'KWH_NEGATIVE' }
+            );
+          }
 
-        if (deltaKm > maxAllowedDeltaKm) {
-          throw new AppError(
-            `Odometer Validation Failed: Travel distance of ${deltaKm} KM exceeds maximum allowable limit of ${maxAllowedDeltaKm} KM.`,
-            422,
-            { currentKm, previousKm, deltaKm, maxLimitKm: maxAllowedDeltaKm, violation: 'KM_DELTA_EXCEEDED' }
-          );
-        }
-
-        // Rule 2: Hour Meter Validation (Current HM must strictly increase when unit has HM history)
-        if (previousHm > 0 && currentHm <= previousHm) {
-          throw new AppError(
-            currentHm === previousHm
-              ? `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be equal to previous recorded HM (${previousHm}). Unit must operate before refuelling.`
-              : `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be less than previous recorded HM (${previousHm}). HM must increase on every refuelling.`,
-            422,
-            { currentHm, previousHm, deltaHm, violation: 'HM_NOT_INCREASING' }
-          );
-        } else if (previousHm === 0 && currentHm < 0) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be negative.`,
-            422,
-            { currentHm, previousHm, deltaHm, violation: 'HM_NEGATIVE' }
-          );
-        }
-
-        if (deltaHm > maxAllowedDeltaHm) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Operating duration of ${deltaHm} Hours exceeds maximum allowable limit of ${maxAllowedDeltaHm} Hours.`,
-            422,
-            { currentHm, previousHm, deltaHm, maxLimitHm: maxAllowedDeltaHm, violation: 'HM_DELTA_EXCEEDED' }
-          );
+          if (previousKwh > 0 && effectiveCurrentKwh < previousKwh) {
+            throw new AppError(
+              `KWH Validation Failed: Current KWH (${effectiveCurrentKwh}) cannot be less than last recorded KWH (${previousKwh}).`,
+              422,
+              { currentKwh: effectiveCurrentKwh, previousKwh, deltaKwh, violation: 'KWH_DECREASING' }
+            );
+          }
         }
       }
 
@@ -320,12 +361,15 @@ export class FuelService {
           type: unit.type || (unit.unitCode.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
           dateStr,
           jamStr,
-          previousKm,
-          currentKm,
-          deltaKm,
-          previousHm,
-          currentHm,
-          deltaHm,
+          previousKm: unit.hasKm ? previousKm : 0,
+          currentKm: unit.hasKm ? effectiveCurrentKm : 0,
+          deltaKm: unit.hasKm ? deltaKm : 0,
+          previousHm: unit.hasHm ? previousHm : 0,
+          currentHm: unit.hasHm ? effectiveCurrentHm : 0,
+          deltaHm: unit.hasHm ? deltaHm : 0,
+          previousKwh: unit.hasKwh ? previousKwh : 0,
+          currentKwh: unit.hasKwh ? effectiveCurrentKwh : 0,
+          deltaKwh: unit.hasKwh ? deltaKwh : 0,
           volumeLiters,
           shift,
           operator,
@@ -334,6 +378,11 @@ export class FuelService {
           stockAkhir: newStockBalance,
           totalFuelIn,
           fuelmanName: currentUser.fullName || currentUser.username,
+          sourceType: dto.sourceType || (tank.tankType === 'MOBILE_TRUCK' ? 'FUEL_TRUCK' : 'FUEL_STATION'),
+          flowAwal: dto.flowAwal ?? null,
+          flowAkhir: dto.flowAkhir ?? null,
+          totalisatorQty: dto.totalisatorQty ?? (dto.flowAkhir !== undefined && dto.flowAwal !== undefined ? parseFloat((dto.flowAkhir - dto.flowAwal).toFixed(2)) : null),
+          doNumber: dto.doNumber ?? null,
           bypassValidation,
           bypassReason: bypassValidation ? bypassReason : null,
           syncStatus: SyncStatus.PENDING,
@@ -341,12 +390,13 @@ export class FuelService {
         },
       });
 
-      // 9. Update Unit Last Recorded KM & HM
+      // 9. Update Unit Last Recorded KM, HM & KWH
       await tx.unit.update({
         where: { id: unit.id },
         data: {
-          lastKm: currentKm,
-          lastHm: currentHm,
+          lastKm: unit.hasKm ? Math.max(unit.lastKm, effectiveCurrentKm) : unit.lastKm,
+          lastHm: unit.hasHm ? Math.max(unit.lastHm, effectiveCurrentHm) : unit.lastHm,
+          lastKwh: unit.hasKwh ? Math.max(unit.lastKwh, effectiveCurrentKwh) : unit.lastKwh,
           updatedAt: now,
         },
       });
@@ -360,7 +410,7 @@ export class FuelService {
         },
       });
 
-      // 11. Prepare Google Sheets 16-Column Row Payload
+      // 11. Prepare Google Sheets 16-Column Row Payload (Format-compliant with customer spreadsheet)
       const spreadsheetData: SpreadsheetRowData = {
         no: docketId,
         unitCode: unit.unitCode,
@@ -368,11 +418,11 @@ export class FuelService {
         type: (fuelLog as any).type || unit.type || (unit.unitCode.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
         date: dateStr,
         jam: jamStr,
-        hm: currentHm,
-        km: currentKm,
+        hm: unit.hasHm ? effectiveCurrentHm : '-',
+        km: unit.hasKm ? effectiveCurrentKm : '-',
         qtyOut: volumeLiters,
         shift: shift,
-        operator: operator,
+        operator: unit.hasKwh && effectiveCurrentKwh > 0 ? `${operator} (${effectiveCurrentKwh} Kwh)` : operator,
         fuelIn: fuelInLiters,
         totalFuelOut: totalFuelOut,
         stockAkhir: newStockBalance,
@@ -939,11 +989,18 @@ export class FuelService {
         orderBy: [{ dateStr: 'asc' }, { jamStr: 'asc' }, { no: 'asc' }],
       });
 
-      // Baseline KM and HM
-      const previousKm = precedingLog ? precedingLog.currentKm : 0;
-      const previousHm = precedingLog ? precedingLog.currentHm : 0;
-      const deltaKm = parseFloat((currentKm - previousKm).toFixed(2));
-      const deltaHm = parseFloat((currentHm - previousHm).toFixed(2));
+      // Baseline KM, HM, and KWH based on unit tracking capabilities
+      const effectiveCurrentKm = unit.hasKm ? (currentKm ?? 0) : 0;
+      const effectiveCurrentHm = unit.hasHm ? (currentHm ?? 0) : 0;
+      const effectiveCurrentKwh = unit.hasKwh ? (dto.currentKwh ?? 0) : 0;
+
+      const previousKm = unit.hasKm ? (precedingLog ? precedingLog.currentKm : unit.lastKm) : 0;
+      const previousHm = unit.hasHm ? (precedingLog ? precedingLog.currentHm : unit.lastHm) : 0;
+      const previousKwh = unit.hasKwh ? (precedingLog ? (precedingLog.currentKwh || 0) : unit.lastKwh) : 0;
+
+      const deltaKm = unit.hasKm ? parseFloat((effectiveCurrentKm - previousKm).toFixed(2)) : 0;
+      const deltaHm = unit.hasHm ? parseFloat((effectiveCurrentHm - previousHm).toFixed(2)) : 0;
+      const deltaKwh = unit.hasKwh ? parseFloat((effectiveCurrentKwh - previousKwh).toFixed(2)) : 0;
 
       // Calculate elapsed hours between preceding log and this backdated log
       let maxAllowedDeltaHm = 24;
@@ -963,79 +1020,95 @@ export class FuelService {
 
       // 4. Strict Validation Rules (unless bypassed)
       if (!bypassValidation) {
-        // Absolute Non-Negative Checks
-        if (currentKm < 0) {
-          throw new AppError(
-            `Odometer Validation Failed: Current KM (${currentKm}) cannot be negative.`,
-            422,
-            { currentKm, violation: 'KM_NEGATIVE' }
-          );
+        // Rule 1: Odometer Validation (Only for units with KM tracking)
+        if (unit.hasKm) {
+          if (effectiveCurrentKm < 0) {
+            throw new AppError(
+              `Odometer Validation Failed: Current KM (${effectiveCurrentKm}) cannot be negative.`,
+              422,
+              { currentKm: effectiveCurrentKm, violation: 'KM_NEGATIVE' }
+            );
+          }
+
+          if (previousKm > 0 && effectiveCurrentKm < previousKm) {
+            throw new AppError(
+              `Odometer Validation Failed: Current KM (${effectiveCurrentKm}) cannot be less than preceding recorded KM (${previousKm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}.`,
+              422,
+              { currentKm: effectiveCurrentKm, previousKm, deltaKm, violation: 'KM_DECREASING' }
+            );
+          }
+
+          if (deltaKm > maxAllowedDeltaKm) {
+            throw new AppError(
+              `Odometer Validation Failed: Travel distance of ${deltaKm} KM exceeds maximum allowable limit of ${maxAllowedDeltaKm} KM.`,
+              422,
+              { currentKm: effectiveCurrentKm, previousKm, deltaKm, maxLimitKm: maxAllowedDeltaKm, violation: 'KM_DELTA_EXCEEDED' }
+            );
+          }
+
+          if (subsequentLog && subsequentLog.currentKm > 0 && effectiveCurrentKm > subsequentLog.currentKm) {
+            throw new AppError(
+              `Odometer Validation Failed: Current KM (${effectiveCurrentKm}) exceeds subsequent log recorded KM (${subsequentLog.currentKm}) on ${subsequentLog.dateStr} ${subsequentLog.jamStr}.`,
+              422,
+              { currentKm: effectiveCurrentKm, nextKm: subsequentLog.currentKm, violation: 'KM_EXCEEDS_SUBSEQUENT' }
+            );
+          }
         }
 
-        if (currentHm < 0) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be negative.`,
-            422,
-            { currentHm, violation: 'HM_NEGATIVE' }
-          );
+        // Rule 2: Hour Meter Validation (Only for units with HM tracking)
+        if (unit.hasHm) {
+          if (effectiveCurrentHm < 0) {
+            throw new AppError(
+              `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be negative.`,
+              422,
+              { currentHm: effectiveCurrentHm, violation: 'HM_NEGATIVE' }
+            );
+          }
+
+          if (previousHm > 0 && effectiveCurrentHm <= previousHm) {
+            throw new AppError(
+              effectiveCurrentHm === previousHm
+                ? `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be equal to preceding recorded HM (${previousHm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}. Unit must operate before refuelling.`
+                : `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be less than preceding recorded HM (${previousHm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}. HM must increase on every refuelling.`,
+              422,
+              { currentHm: effectiveCurrentHm, previousHm, deltaHm, violation: 'HM_NOT_INCREASING' }
+            );
+          }
+
+          if (deltaHm > maxAllowedDeltaHm) {
+            throw new AppError(
+              `Hour Meter Validation Failed: Operating duration of ${deltaHm} Hours exceeds maximum allowable limit of ${maxAllowedDeltaHm} Hours.`,
+              422,
+              { currentHm: effectiveCurrentHm, previousHm, deltaHm, maxLimitHm: maxAllowedDeltaHm, violation: 'HM_DELTA_EXCEEDED' }
+            );
+          }
+
+          if (subsequentLog && subsequentLog.currentHm > 0 && effectiveCurrentHm >= subsequentLog.currentHm) {
+            throw new AppError(
+              `Hour Meter Validation Failed: Current HM (${effectiveCurrentHm}) cannot be greater than or equal to subsequent log recorded HM (${subsequentLog.currentHm}) on ${subsequentLog.dateStr} ${subsequentLog.jamStr}.`,
+              422,
+              { currentHm: effectiveCurrentHm, nextHm: subsequentLog.currentHm, violation: 'HM_EXCEEDS_SUBSEQUENT' }
+            );
+          }
         }
 
-        // Rule 1: Odometer Validation
-        if (previousKm > 0 && currentKm < previousKm) {
-          throw new AppError(
-            `Odometer Validation Failed: Current KM (${currentKm}) cannot be less than preceding recorded KM (${previousKm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}.`,
-            422,
-            { currentKm, previousKm, deltaKm, violation: 'KM_DECREASING' }
-          );
-        }
+        // Rule 3: KWH Validation (Only for units with KWH tracking like Genset)
+        if (unit.hasKwh) {
+          if (effectiveCurrentKwh < 0) {
+            throw new AppError(
+              `KWH Validation Failed: Current KWH (${effectiveCurrentKwh}) cannot be negative.`,
+              422,
+              { currentKwh: effectiveCurrentKwh, violation: 'KWH_NEGATIVE' }
+            );
+          }
 
-        if (deltaKm > maxAllowedDeltaKm) {
-          throw new AppError(
-            `Odometer Validation Failed: Travel distance of ${deltaKm} KM exceeds maximum allowable limit of ${maxAllowedDeltaKm} KM.`,
-            422,
-            { currentKm, previousKm, deltaKm, maxLimitKm: maxAllowedDeltaKm, violation: 'KM_DELTA_EXCEEDED' }
-          );
-        }
-
-        if (subsequentLog && currentKm > subsequentLog.currentKm) {
-          throw new AppError(
-            `Odometer Validation Failed: Current KM (${currentKm}) exceeds subsequent log recorded KM (${subsequentLog.currentKm}) on ${subsequentLog.dateStr} ${subsequentLog.jamStr}.`,
-            422,
-            { currentKm, nextKm: subsequentLog.currentKm, violation: 'KM_EXCEEDS_SUBSEQUENT' }
-          );
-        }
-
-        // Rule 2: Hour Meter Validation (Current HM must strictly increase when unit has HM history)
-        if (previousHm > 0 && currentHm <= previousHm) {
-          throw new AppError(
-            currentHm === previousHm
-              ? `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be equal to preceding recorded HM (${previousHm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}. Unit must operate before refuelling.`
-              : `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be less than preceding recorded HM (${previousHm}) recorded on ${precedingLog?.dateStr} ${precedingLog?.jamStr}. HM must increase on every refuelling.`,
-            422,
-            { currentHm, previousHm, deltaHm, violation: 'HM_NOT_INCREASING' }
-          );
-        } else if (previousHm === 0 && currentHm < 0) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be negative.`,
-            422,
-            { currentHm, previousHm, deltaHm, violation: 'HM_NEGATIVE' }
-          );
-        }
-
-        if (deltaHm > maxAllowedDeltaHm) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Operating duration of ${deltaHm} Hours exceeds maximum allowable limit of ${maxAllowedDeltaHm} Hours.`,
-            422,
-            { currentHm, previousHm, deltaHm, maxLimitHm: maxAllowedDeltaHm, violation: 'HM_DELTA_EXCEEDED' }
-          );
-        }
-
-        if (subsequentLog && currentHm >= subsequentLog.currentHm) {
-          throw new AppError(
-            `Hour Meter Validation Failed: Current HM (${currentHm}) cannot be greater than or equal to subsequent log recorded HM (${subsequentLog.currentHm}) on ${subsequentLog.dateStr} ${subsequentLog.jamStr}.`,
-            422,
-            { currentHm, nextHm: subsequentLog.currentHm, violation: 'HM_EXCEEDS_SUBSEQUENT' }
-          );
+          if (previousKwh > 0 && effectiveCurrentKwh < previousKwh) {
+            throw new AppError(
+              `KWH Validation Failed: Current KWH (${effectiveCurrentKwh}) cannot be less than preceding recorded KWH (${previousKwh}).`,
+              422,
+              { currentKwh: effectiveCurrentKwh, previousKwh, deltaKwh, violation: 'KWH_DECREASING' }
+            );
+          }
         }
       }
 
@@ -1080,12 +1153,15 @@ export class FuelService {
           type: unit.type || (unit.unitCode.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
           dateStr,
           jamStr: jamNormalized,
-          previousKm,
-          currentKm,
-          deltaKm,
-          previousHm,
-          currentHm,
-          deltaHm,
+          previousKm: unit.hasKm ? previousKm : 0,
+          currentKm: unit.hasKm ? effectiveCurrentKm : 0,
+          deltaKm: unit.hasKm ? deltaKm : 0,
+          previousHm: unit.hasHm ? previousHm : 0,
+          currentHm: unit.hasHm ? effectiveCurrentHm : 0,
+          deltaHm: unit.hasHm ? deltaHm : 0,
+          previousKwh: unit.hasKwh ? previousKwh : 0,
+          currentKwh: unit.hasKwh ? effectiveCurrentKwh : 0,
+          deltaKwh: unit.hasKwh ? deltaKwh : 0,
           volumeLiters,
           shift,
           operator,
@@ -1094,6 +1170,11 @@ export class FuelService {
           stockAkhir: newStockBalance,
           totalFuelIn,
           fuelmanName: dto.fuelmanName || currentUser.fullName || currentUser.username,
+          sourceType: dto.sourceType || (tank.tankType === 'MOBILE_TRUCK' ? 'FUEL_TRUCK' : 'FUEL_STATION'),
+          flowAwal: dto.flowAwal ?? null,
+          flowAkhir: dto.flowAkhir ?? null,
+          totalisatorQty: dto.totalisatorQty ?? (dto.flowAkhir !== undefined && dto.flowAwal !== undefined ? parseFloat((dto.flowAkhir - dto.flowAwal).toFixed(2)) : null),
+          doNumber: dto.doNumber ?? null,
           bypassValidation,
           bypassReason: bypassValidation ? bypassReason : null,
           syncStatus: SyncStatus.PENDING,
@@ -1101,27 +1182,31 @@ export class FuelService {
         },
       });
 
-      // 9. Update Unit Last Recorded KM & HM ONLY if this backdated record is the latest chronologically
+      // 9. Update Unit Last Recorded KM, HM & KWH ONLY if this backdated record is the latest chronologically
       if (!subsequentLog) {
         await tx.unit.update({
           where: { id: unit.id },
           data: {
-            lastKm: currentKm,
-            lastHm: currentHm,
+            lastKm: unit.hasKm ? Math.max(unit.lastKm, effectiveCurrentKm) : unit.lastKm,
+            lastHm: unit.hasHm ? Math.max(unit.lastHm, effectiveCurrentHm) : unit.lastHm,
+            lastKwh: unit.hasKwh ? Math.max(unit.lastKwh, effectiveCurrentKwh) : unit.lastKwh,
             updatedAt: new Date(),
           },
         });
       } else {
         // Re-chain immediate subsequent log so its baselines & deltas reflect this newly inserted record
-        const updatedDeltaHm = parseFloat(Math.max(0, subsequentLog.currentHm - currentHm).toFixed(2));
-        const updatedDeltaKm = parseFloat(Math.max(0, subsequentLog.currentKm - currentKm).toFixed(2));
+        const updatedDeltaHm = unit.hasHm ? parseFloat(Math.max(0, subsequentLog.currentHm - effectiveCurrentHm).toFixed(2)) : 0;
+        const updatedDeltaKm = unit.hasKm ? parseFloat(Math.max(0, subsequentLog.currentKm - effectiveCurrentKm).toFixed(2)) : 0;
+        const updatedDeltaKwh = unit.hasKwh ? parseFloat(Math.max(0, (subsequentLog.currentKwh || 0) - effectiveCurrentKwh).toFixed(2)) : 0;
         await tx.fuelLog.update({
           where: { id: subsequentLog.id },
           data: {
-            previousHm: currentHm,
+            previousHm: unit.hasHm ? effectiveCurrentHm : 0,
             deltaHm: updatedDeltaHm,
-            previousKm: currentKm,
+            previousKm: unit.hasKm ? effectiveCurrentKm : 0,
             deltaKm: updatedDeltaKm,
+            previousKwh: unit.hasKwh ? effectiveCurrentKwh : 0,
+            deltaKwh: updatedDeltaKwh,
           },
         });
       }
@@ -1135,7 +1220,7 @@ export class FuelService {
         },
       });
 
-      // 11. Prepare Google Sheets 16-Column Row Payload
+      // 11. Prepare Google Sheets 16-Column Row Payload (Compliant with customer spreadsheet)
       const spreadsheetData: SpreadsheetRowData = {
         no: docketId,
         unitCode: unit.unitCode,
@@ -1143,11 +1228,11 @@ export class FuelService {
         type: unit.type || (unit.unitCode.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
         date: dateStr,
         jam: jamNormalized,
-        hm: currentHm,
-        km: currentKm,
+        hm: unit.hasHm ? effectiveCurrentHm : '-',
+        km: unit.hasKm ? effectiveCurrentKm : '-',
         qtyOut: volumeLiters,
         shift: shift,
-        operator: operator,
+        operator: unit.hasKwh && effectiveCurrentKwh > 0 ? `${operator} (${effectiveCurrentKwh} Kwh)` : operator,
         fuelIn: fuelInLiters,
         totalFuelOut: totalFuelOut,
         stockAkhir: newStockBalance,

@@ -17,6 +17,15 @@ export class ExcelService {
 
     const logs = await prisma.fuelLog.findMany({
       where,
+      include: {
+        unit: {
+          select: {
+            hasHm: true,
+            hasKm: true,
+            hasKwh: true,
+          },
+        },
+      },
       orderBy: [{ no: 'asc' }],
     });
 
@@ -109,6 +118,15 @@ export class ExcelService {
       totalQtyOut += log.volumeLiters;
       totalFuelIn += log.fuelInLiters;
 
+      const hasHm = log.unit ? log.unit.hasHm : log.currentHm > 0;
+      const hasKm = log.unit ? log.unit.hasKm : log.currentKm > 0;
+      const displayHm = hasHm ? log.currentHm : '-';
+      const displayKm = hasKm ? log.currentKm : '-';
+      const hasKwh = log.unit ? log.unit.hasKwh : (log.currentKwh && log.currentKwh > 0);
+      const displayOperator = hasKwh && log.currentKwh && log.currentKwh > 0 && !log.operator.includes('Kwh')
+        ? `${log.operator} (${log.currentKwh} Kwh)`
+        : log.operator;
+
       const row = sheet.getRow(currentRowIdx);
       row.values = [
         log.no,
@@ -117,11 +135,11 @@ export class ExcelService {
         (log as any).type || '-',
         log.dateStr,
         log.jamStr,
-        log.currentHm,
-        log.currentKm,
+        displayHm,
+        displayKm,
         log.volumeLiters,
         log.shift,
-        log.operator,
+        displayOperator,
         log.fuelInLiters,
         log.totalFuelOut,
         log.stockAkhir,
@@ -153,8 +171,16 @@ export class ExcelService {
         // Center: 1 (NO), 5 (DATE), 6 (JAM), 10 (SHIFT)
         if ([1, 5, 6, 10].includes(colNumber)) {
           cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        } else if ([7, 8, 9, 12, 13, 14, 15].includes(colNumber)) {
-          // Right & numeric: 7 (HM), 8 (KM), 9 (QTY OUT), 12 (FUEL IN), 13 (TOTAL FUEL OUT), 14 (STOCK AKHIR), 15 (TOTAL FUEL IN)
+        } else if ([7, 8].includes(colNumber)) {
+          // HM and KM: if '-' center it, else right numeric
+          if (cell.value === '-') {
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+          } else {
+            cell.alignment = { vertical: 'middle', horizontal: 'right' };
+            cell.numFmt = '#,##0.00';
+          }
+        } else if ([9, 12, 13, 14, 15].includes(colNumber)) {
+          // Right & numeric: 9 (QTY OUT), 12 (FUEL IN), 13 (TOTAL FUEL OUT), 14 (STOCK AKHIR), 15 (TOTAL FUEL IN)
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
           cell.numFmt = '#,##0.00';
         } else {
