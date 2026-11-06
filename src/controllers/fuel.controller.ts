@@ -59,7 +59,7 @@ export class FuelController {
 
   static async getFuelLogs(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { page, limit, unitCode, dateStr, monthStr, shift, fuelmanId, syncStatus } = req.query;
+      const { page, limit, unitCode, dateStr, monthStr, shift, fuelmanId, syncStatus, site } = req.query;
       const result = await FuelService.getFuelLogs({
         page: page ? parseInt(page as string, 10) : undefined,
         limit: limit ? parseInt(limit as string, 10) : undefined,
@@ -69,6 +69,7 @@ export class FuelController {
         shift: shift as string,
         fuelmanId: req.user?.role === 'FUELMAN' ? req.user.id : (fuelmanId as string),
         syncStatus: syncStatus as SyncStatus,
+        site: site as string,
       });
       return sendSuccess(res, result.data, 'Fuel logs retrieved successfully', 200, result.meta);
     } catch (error) {
@@ -78,8 +79,8 @@ export class FuelController {
 
   static async getShiftSummary(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { dateStr, shift } = req.query;
-      const summary = await FuelService.getShiftSummary(dateStr as string, shift as string);
+      const { dateStr, shift, site } = req.query;
+      const summary = await FuelService.getShiftSummary(dateStr as string, shift as string, site as string);
       return sendSuccess(res, summary, 'Shift summary retrieved successfully');
     } catch (error) {
       next(error);
@@ -91,8 +92,9 @@ export class FuelController {
       const now = new Date();
       const year = req.query.year ? parseInt(req.query.year as string, 10) : now.getFullYear();
       const month = req.query.month ? parseInt(req.query.month as string, 10) : (now.getMonth() + 1);
+      const site = req.query.site as string | undefined;
 
-      const summary = await FuelService.getMonthlySummary(year, month);
+      const summary = await FuelService.getMonthlySummary(year, month, site);
       return sendSuccess(res, summary, 'Monthly fuel summary retrieved successfully');
     } catch (error) {
       next(error);
@@ -146,6 +148,16 @@ export class FuelController {
       const id = req.params.id as string;
       const result = await FuelService.deleteHistoricalLog(id, req.user!);
       return sendSuccess(res, result, 'Historical fuel record deleted successfully', 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async syncSingleLog(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const id = req.params.id as string;
+      const result = await FuelService.syncSingleLogToSheets(id);
+      return sendSuccess(res, result, result.message, 200);
     } catch (error) {
       next(error);
     }

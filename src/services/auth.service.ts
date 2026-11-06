@@ -5,7 +5,48 @@ import { config } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { Role } from '@prisma/client';
 
+// Revoked tokens cache with automatic TTL cleanup
+const revokedTokens = new Map<string, number>();
+
+// Periodically purge expired revoked tokens
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiry] of revokedTokens.entries()) {
+    if (now > expiry) {
+      revokedTokens.delete(token);
+    }
+  }
+}, 15 * 60 * 1000);
+
 export class AuthService {
+  /**
+   * Revoke an active access or refresh token upon logout
+   */
+  static revokeToken(token: string): void {
+    if (!token) return;
+    try {
+      const decoded = jwt.decode(token) as { exp?: number } | null;
+      const expiryMs = decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000;
+      revokedTokens.set(token, expiryMs);
+    } catch {
+      revokedTokens.set(token, Date.now() + 24 * 60 * 60 * 1000);
+    }
+  }
+
+  /**
+   * Check if a token has been explicitly invalidated / logged out
+   */
+  static isTokenRevoked(token: string): boolean {
+    if (!token) return false;
+    const expiry = revokedTokens.get(token);
+    if (!expiry) return false;
+    if (Date.now() > expiry) {
+      revokedTokens.delete(token);
+      return false;
+    }
+    return true;
+  }
+
   static async login(username: string, password: string) {
     const user = await prisma.user.findUnique({
       where: { username },

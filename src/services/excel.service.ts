@@ -236,4 +236,303 @@ export class ExcelService {
 
     return workbook;
   }
+
+  /**
+   * Generates exact ERP CSV format matching 15-column ERP upload specification
+   */
+  static async generateErpCsv(filter?: { dateStr?: string; monthStr?: string; site?: string; delimiter?: string }): Promise<string> {
+    const where: any = {};
+    if (filter?.dateStr) {
+      where.dateStr = filter.dateStr;
+    } else if (filter?.monthStr) {
+      where.dateStr = { startsWith: filter.monthStr };
+    }
+    if (filter?.site && filter.site !== 'ALL') {
+      where.site = filter.site;
+    }
+
+    const logs = await prisma.fuelLog.findMany({
+      where,
+      include: {
+        unit: {
+          select: {
+            plateNumber: true,
+            hasHm: true,
+            hasKm: true,
+            hasKwh: true,
+          },
+        },
+        tank: {
+          select: {
+            tankCode: true,
+            name: true,
+            site: true,
+            slocCode: true,
+            projectArea: true,
+          },
+        },
+      },
+      orderBy: [{ dateStr: 'asc' }, { jamStr: 'asc' }, { no: 'asc' }],
+    });
+
+    const sep = filter?.delimiter === 'semicolon' || filter?.delimiter === ';' ? ';' : ',';
+
+    const headers = [
+      'Unit Code',
+      'Code Alias',
+      'Shift D/N*',
+      'Date YYYYMMDD*',
+      'Time HH:MM*',
+      'Opr/Drv*',
+      'Fuelman*',
+      'Broken 0/2*',
+      'Code Storage Loc.',
+      'Hm/Km Current*',
+      'Hm/Km Last*',
+      'Material Code*',
+      'End Flow *',
+      'Start Flow *',
+      'Qty*',
+    ];
+
+    const escapeCsv = (val: any): string => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(sep) || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const formatNum = (num: number) => {
+      return Number.isInteger(num) ? num.toFixed(1) : String(num);
+    };
+
+    const rows: string[] = [];
+    rows.push(headers.map(escapeCsv).join(sep));
+
+    logs.forEach((log) => {
+      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift.toLowerCase().includes('night') ? 'N' : 'D';
+      const dateFormatted = log.dateStr ? log.dateStr.replace(/-/g, '') : '';
+      const timeFormatted = log.jamStr ? log.jamStr.substring(0, 5) : '00:00';
+      const isBroken = log.bypassValidation ? '2' : '0';
+      const sloc = (log.tank as any)?.slocCode || (filter?.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK001');
+      const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
+      const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
+      const materialCode = 'FL-01-0001';
+      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined ? log.flowAkhir : (log.volumeLiters > 0 ? log.volumeLiters : 0);
+      const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
+      const qty = log.volumeLiters;
+      const alias = log.unit?.plateNumber || log.unitCode;
+
+      const rowValues = [
+        log.unitCode,
+        alias,
+        shiftCode,
+        dateFormatted,
+        timeFormatted,
+        log.operator || '-',
+        log.fuelmanName || '-',
+        isBroken,
+        sloc,
+        formatNum(currentMeter),
+        formatNum(lastMeter),
+        materialCode,
+        formatNum(endFlow),
+        formatNum(startFlow),
+        formatNum(qty),
+      ];
+
+      rows.push(rowValues.map(escapeCsv).join(sep));
+    });
+
+    // UTF-8 BOM + CRLF
+    return '\uFEFF' + rows.join('\r\n');
+  }
+
+  /**
+   * Generates exact ERP format matching "Format Upload Fuel.xls" / "Format Upload & Sloc.Fuel.xls"
+   */
+  static async generateErpReport(filter?: { dateStr?: string; monthStr?: string; site?: string }) {
+    const where: any = {};
+    if (filter?.dateStr) {
+      where.dateStr = filter.dateStr;
+    } else if (filter?.monthStr) {
+      where.dateStr = { startsWith: filter.monthStr };
+    }
+    if (filter?.site && filter.site !== 'ALL') {
+      where.site = filter.site;
+    }
+
+    const logs = await prisma.fuelLog.findMany({
+      where,
+      include: {
+        unit: {
+          select: {
+            plateNumber: true,
+            hasHm: true,
+            hasKm: true,
+            hasKwh: true,
+          },
+        },
+        tank: {
+          select: {
+            tankCode: true,
+            name: true,
+            site: true,
+            slocCode: true,
+            projectArea: true,
+          },
+        },
+      },
+      orderBy: [{ dateStr: 'asc' }, { jamStr: 'asc' }, { no: 'asc' }],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Batara Fuel Monitoring System (FMS-Core)';
+    workbook.created = new Date();
+
+    // Sheet 1: Format upload Fuel
+    const sheet = workbook.addWorksheet('Format upload Fuel', {
+      views: [{ showGridLines: true, state: 'frozen', ySplit: 1 }],
+    });
+
+    const headers = [
+      'Unit Code',
+      'Code Alias',
+      'Shift\nD/N*',
+      'Date\nYYYYMMDD*',
+      'Time\nHH:MM*',
+      'Opr/Drv*\n',
+      'Fuelman*\n',
+      'Broken\n0/2*',
+      'Code\nStorage Loc.',
+      'Hm/Km\nCurrent*',
+      'Hm/Km\nLast*',
+      'Material Code*',
+      'End Flow *',
+      'Start Flow *',
+      'Qty*',
+    ];
+
+    sheet.columns = [
+      { key: 'unitCode', width: 14 },
+      { key: 'codeAlias', width: 14 },
+      { key: 'shift', width: 10 },
+      { key: 'date', width: 16 },
+      { key: 'time', width: 12 },
+      { key: 'operator', width: 20 },
+      { key: 'fuelman', width: 20 },
+      { key: 'broken', width: 12 },
+      { key: 'sloc', width: 18 },
+      { key: 'currentMeter', width: 16 },
+      { key: 'lastMeter', width: 16 },
+      { key: 'materialCode', width: 16 },
+      { key: 'endFlow', width: 14 },
+      { key: 'startFlow', width: 14 },
+      { key: 'qty', width: 14 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.values = headers;
+    headerRow.height = 32;
+
+    headerRow.eachCell((cell) => {
+      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF000000' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE2E8F0' },
+      };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
+        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      };
+    });
+
+    logs.forEach((log) => {
+      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift.toLowerCase().includes('night') ? 'N' : 'D';
+      const dateFormatted = log.dateStr ? log.dateStr.replace(/-/g, '') : '';
+      const timeFormatted = log.jamStr ? log.jamStr.substring(0, 5) : '00:00';
+      const isBroken = log.bypassValidation ? '2' : '0';
+      const sloc = (log.tank as any)?.slocCode || (filter?.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK001');
+      const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
+      const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
+      const materialCode = 'FL-01-0001';
+      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined ? log.flowAkhir : (log.volumeLiters > 0 ? log.volumeLiters : 0);
+      const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
+      const qty = log.volumeLiters;
+      const alias = log.unit?.plateNumber || log.unitCode;
+
+      const row = sheet.addRow([
+        log.unitCode,
+        alias,
+        shiftCode,
+        dateFormatted,
+        timeFormatted,
+        log.operator || '-',
+        log.fuelmanName || '-',
+        isBroken,
+        sloc,
+        currentMeter,
+        lastMeter,
+        materialCode,
+        endFlow,
+        startFlow,
+        qty,
+      ]);
+
+      row.height = 20;
+      row.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Calibri', size: 10 };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        };
+        if ([3, 4, 5, 8, 9, 12].includes(colNumber)) {
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        } else if ([10, 11, 13, 14, 15].includes(colNumber)) {
+          cell.alignment = { vertical: 'middle', horizontal: 'right' };
+          cell.numFmt = '#,##0.0';
+        } else {
+          cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        }
+      });
+    });
+
+    // Sheet 2: Master Warehouse (Reference Sheet matching Format Upload & Sloc.Fuel.xls)
+    const whSheet = workbook.addWorksheet('Master Warehouse');
+    whSheet.columns = [
+      { header: 'No', key: 'no', width: 6 },
+      { header: 'Code', key: 'code', width: 14 },
+      { header: 'Storage Location', key: 'name', width: 28 },
+      { header: 'Material Code', key: 'mat', width: 16 },
+      { header: 'Specification', key: 'spec', width: 18 },
+      { header: 'Project Area', key: 'area', width: 14 },
+      { header: 'Stmain', key: 'stmain', width: 10 },
+      { header: 'Material Category', key: 'cat', width: 18 },
+    ];
+    whSheet.getRow(1).font = { name: 'Calibri', size: 10, bold: true };
+
+    const allTanks = await prisma.storageTank.findMany({ orderBy: { tankCode: 'asc' } });
+    allTanks.forEach((tank, idx) => {
+      whSheet.addRow([
+        idx + 1,
+        (tank as any).slocCode || 'MTK001',
+        tank.name,
+        'FL-01-0001',
+        tank.fuelType || 'BIO SOLAR B-0',
+        (tank as any).projectArea || 'SNY',
+        0,
+        'V001',
+      ]);
+    });
+
+    return workbook;
+  }
 }

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { AuthService } from '../services/auth.service.js';
 import { AuthenticatedRequest, AuthenticatedUser } from '../types/index.js';
 
 interface JwtPayload {
@@ -26,6 +27,10 @@ export const authenticateJwt = async (
     const token = authHeader.split(' ')[1];
     if (!token) {
       throw new AppError('Access token is missing.', 401);
+    }
+
+    if (AuthService.isTokenRevoked(token)) {
+      throw new AppError('Session has ended or token was revoked. Please log in again.', 401);
     }
 
     let decoded: JwtPayload;

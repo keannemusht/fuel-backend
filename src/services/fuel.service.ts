@@ -378,6 +378,8 @@ export class FuelService {
           stockAkhir: newStockBalance,
           totalFuelIn,
           fuelmanName: currentUser.fullName || currentUser.username,
+          site: (tank as any)?.site || 'SENYIUR',
+          slocCode: (tank as any)?.slocCode || 'MTK001',
           sourceType: dto.sourceType || (tank.tankType === 'MOBILE_TRUCK' ? 'FUEL_TRUCK' : 'FUEL_STATION'),
           flowAwal: dto.flowAwal ?? null,
           flowAkhir: dto.flowAkhir ?? null,
@@ -657,6 +659,8 @@ export class FuelService {
           stockAkhir: newStockBalance,
           totalFuelIn,
           fuelmanName,
+          site: (tank as any)?.site || 'SENYIUR',
+          slocCode: (tank as any)?.slocCode || 'MTK001',
           bypassValidation: true,
           bypassReason,
           syncStatus: SyncStatus.PENDING,
@@ -1170,6 +1174,8 @@ export class FuelService {
           stockAkhir: newStockBalance,
           totalFuelIn,
           fuelmanName: dto.fuelmanName || currentUser.fullName || currentUser.username,
+          site: (tank as any)?.site || 'SENYIUR',
+          slocCode: (tank as any)?.slocCode || 'MTK001',
           sourceType: dto.sourceType || (tank.tankType === 'MOBILE_TRUCK' ? 'FUEL_TRUCK' : 'FUEL_STATION'),
           flowAwal: dto.flowAwal ?? null,
           flowAkhir: dto.flowAkhir ?? null,
@@ -1346,6 +1352,7 @@ export class FuelService {
     shift?: string;
     fuelmanId?: string;
     syncStatus?: SyncStatus;
+    site?: string;
   }) {
     const page = query.page || 1;
     const limit = query.limit || 50;
@@ -1358,6 +1365,7 @@ export class FuelService {
     if (query.shift) where.shift = query.shift;
     if (query.fuelmanId) where.fuelmanId = query.fuelmanId;
     if (query.syncStatus) where.syncStatus = query.syncStatus;
+    if (query.site && query.site !== 'ALL') where.site = query.site;
 
     const [total, logs] = await Promise.all([
       prisma.fuelLog.count({ where }),
@@ -1395,10 +1403,14 @@ export class FuelService {
   /**
    * Shift Summary KPIs
    */
-  static async getShiftSummary(dateStr?: string, shift?: string) {
+  static async getShiftSummary(dateStr?: string, shift?: string, site?: string) {
     const targetDate = dateStr || new Date().toISOString().split('T')[0];
     const where: any = { dateStr: targetDate };
     if (shift) where.shift = shift;
+    if (site && site !== 'ALL') where.site = site;
+
+    const tankWhere: any = {};
+    if (site && site !== 'ALL') tankWhere.site = site;
 
     const [totals, count, activeTanks] = await Promise.all([
       prisma.fuelLog.aggregate({
@@ -1410,6 +1422,7 @@ export class FuelService {
       }),
       prisma.fuelLog.count({ where }),
       prisma.storageTank.findMany({
+        where: tankWhere,
         select: {
           id: true,
           tankCode: true,
@@ -1417,6 +1430,8 @@ export class FuelService {
           capacityLiters: true,
           currentStockLiters: true,
           minStockAlertLiters: true,
+          site: true,
+          slocCode: true,
         },
       }),
     ]);
@@ -1424,6 +1439,7 @@ export class FuelService {
     return {
       date: targetDate,
       shift: shift || 'ALL',
+      site: site || 'ALL',
       totalDispensedLiters: totals._sum.volumeLiters || 0,
       totalFuelInLiters: totals._sum.fuelInLiters || 0,
       totalTransactions: count,
@@ -1434,11 +1450,14 @@ export class FuelService {
   /**
    * Monthly Summary KPIs & Analytics
    */
-  static async getMonthlySummary(year: number, month: number) {
+  static async getMonthlySummary(year: number, month: number, site?: string) {
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
-    const where = {
+    const where: any = {
       dateStr: { startsWith: monthStr },
     };
+    if (site && site !== 'ALL') {
+      where.site = site;
+    }
 
     const [totals, count, distinctUnits, logs] = await Promise.all([
       prisma.fuelLog.aggregate({
@@ -1615,6 +1634,8 @@ export class FuelService {
         stockAkhir,
         totalFuelIn,
         fuelmanName: data.fuelmanName || currentUser.fullName || currentUser.username,
+        site: (tank as any)?.site || data.site || 'SENYIUR',
+        slocCode: (tank as any)?.slocCode || data.slocCode || 'MTK001',
         bypassValidation: true,
         bypassReason: data.bypassReason || 'Manual Historical Entry by Admin',
         dispensedAt: dispensedAtDate,
@@ -1824,5 +1845,77 @@ export class FuelService {
     return logs
       .map((l) => l.operator.trim())
       .filter((op) => op.length > 0 && op !== '-');
+  }
+
+  /**
+   * Synchronizes an individual fuel log record directly to Google Sheets
+   */
+  static async syncSingleLogToSheets(id: string) {
+    const log = await prisma.fuelLog.findUnique({
+      where: { id },
+      include: { unit: true, tank: true },
+    });
+
+    if (!log) {
+      throw new AppError('Fuel log not found', 404);
+    }
+
+    const spreadsheetData: SpreadsheetRowData = {
+      no: log.no,
+      unitCode: log.unitCode,
+      category: log.category,
+      type: log.type || (log.unitCode?.toUpperCase().startsWith('PM') ? 'DOUBLE_TRAILER' : 'DUMP_TRUCK'),
+      date: log.dateStr,
+      jam: log.jamStr,
+      hm: log.currentHm,
+      km: log.currentKm,
+      qtyOut: log.volumeLiters,
+      shift: log.shift,
+      operator: log.operator,
+      fuelIn: log.fuelInLiters,
+      totalFuelOut: log.totalFuelOut,
+      stockAkhir: log.stockAkhir,
+      totalFuelIn: log.totalFuelIn,
+      fuelman: log.fuelmanName,
+    };
+
+    const syncResult = await GoogleSheetsService.appendFuelRow(spreadsheetData);
+
+    if (syncResult.success) {
+      const updated = await prisma.fuelLog.update({
+        where: { id },
+        data: {
+          syncStatus: SyncStatus.SYNCED,
+          syncedAt: new Date(),
+          syncError: null,
+        },
+      });
+
+      // Update syncQueue if exists
+      await prisma.syncQueue.updateMany({
+        where: { entityId: id },
+        data: {
+          status: SyncStatus.SYNCED,
+          updatedAt: new Date(),
+          lastError: null,
+        },
+      });
+
+      return {
+        success: true,
+        log: updated,
+        message: `Log #${log.no} (${log.unitCode}) successfully synchronized to Google Sheets.`,
+      };
+    } else {
+      await prisma.fuelLog.update({
+        where: { id },
+        data: {
+          syncStatus: SyncStatus.FAILED,
+          syncError: syncResult.error || 'Failed to append to Google Sheets',
+        },
+      });
+
+      throw new AppError(syncResult.error || 'Failed to sync log to Google Sheets', 502);
+    }
   }
 }

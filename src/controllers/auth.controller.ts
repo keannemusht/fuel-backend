@@ -45,6 +45,24 @@ export class AuthController {
     }
   }
 
+  static async logout(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        AuthService.revokeToken(token);
+      }
+
+      if (req.body?.refreshToken) {
+        AuthService.revokeToken(req.body.refreshToken);
+      }
+
+      return sendSuccess(res, null, 'Logged out successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async registerUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const user = await AuthService.createUser(req.body);

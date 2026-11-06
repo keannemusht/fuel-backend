@@ -16,6 +16,8 @@ router.use(authenticateJwt);
 
 // Export and Template downloads are accessible to authenticated users
 router.get('/export', ExcelController.exportShiftExcel);
+router.get('/export-erp', ExcelController.exportErpExcel);
+router.get('/export-erp-csv', ExcelController.exportErpCsv);
 router.get('/template', ExcelController.getTemplate);
 
 // Batch Imports are restricted to ADMIN and MANAGEMENT

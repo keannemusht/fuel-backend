@@ -42,6 +42,77 @@ export class ExcelController {
     }
   }
 
+  static async exportErpExcel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const { dateStr, monthStr, site, format } = req.query;
+
+      if (format === 'csv') {
+        return ExcelController.exportErpCsv(req, res, next);
+      }
+
+      const workbook = await ExcelService.generateErpReport({
+        dateStr: dateStr as string,
+        monthStr: monthStr as string,
+        site: site as string,
+      });
+
+      const siteLabel = site === 'MUARA_PAHU' ? 'MUARAPAHU' : site === 'SENYIUR' ? 'SENYIUR' : 'ALL_SITE';
+      const timeLabel = dateStr ? `DATE_${dateStr}` : monthStr ? `MONTH_${monthStr}` : 'ALL';
+      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}_${timeLabel}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+      await workbook.xlsx.write(res);
+      res.end();
+
+      const userAgent = Array.isArray(req.headers['user-agent']) ? req.headers['user-agent'][0] : req.headers['user-agent'];
+      await AuditService.log({
+        userId: req.user?.id,
+        action: AuditAction.EXPORT,
+        entity: 'FuelLog',
+        newValues: { fileName, format: 'ERP_UPLOAD_15_COLS', filter: { dateStr, monthStr, site } },
+        ipAddress: req.ip,
+        userAgent,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async exportErpCsv(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const { dateStr, monthStr, site, delimiter } = req.query;
+      const csvContent = await ExcelService.generateErpCsv({
+        dateStr: dateStr as string,
+        monthStr: monthStr as string,
+        site: site as string,
+        delimiter: delimiter as string,
+      });
+
+      const siteLabel = site === 'MUARA_PAHU' ? 'MUARAPAHU' : site === 'SENYIUR' ? 'SENYIUR' : 'ALL_SITE';
+      const timeLabel = dateStr ? `DATE_${dateStr}` : monthStr ? `MONTH_${monthStr}` : 'ALL';
+      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}_${timeLabel}.csv`;
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+      res.status(200).send(csvContent);
+
+      const userAgent = Array.isArray(req.headers['user-agent']) ? req.headers['user-agent'][0] : req.headers['user-agent'];
+      await AuditService.log({
+        userId: req.user?.id,
+        action: AuditAction.EXPORT,
+        entity: 'FuelLog',
+        newValues: { fileName, format: 'ERP_UPLOAD_CSV_15_COLS', filter: { dateStr, monthStr, site } },
+        ipAddress: req.ip,
+        userAgent,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   static async batchImport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       if (!req.file) {

@@ -84,6 +84,7 @@ router.get('/summary', FuelController.getShiftSummary);
 router.get('/monthly-summary', FuelController.getMonthlySummary);
 router.post('/sync-month', requireRole([Role.ADMIN, Role.MANAGEMENT, Role.FUELMAN]), FuelController.syncMonthlyRecords);
 router.post('/sync-master', requireRole([Role.ADMIN, Role.MANAGEMENT, Role.FUELMAN]), FuelController.syncMasterSheet);
+router.post('/logs/:id/sync', requireRole([Role.ADMIN, Role.MANAGEMENT, Role.FUELMAN]), FuelController.syncSingleLog);
 
 // Historical Log CRUD (Admin & Management)
 router.post('/logs', requireRole([Role.ADMIN, Role.MANAGEMENT]), FuelController.createHistoricalLog);

@@ -88,6 +88,9 @@ model StorageTank {
   minStockAlertLiters Float    @default(5000.0)
   fuelType            String   @default("HIGH SPEED DIESEL / SOLAR B35")
   tankType            String   @default("STATIONARY") // STATIONARY or MOBILE_TRUCK
+  site                String   @default("SENYIUR") // SENYIUR or MUARA_PAHU
+  slocCode            String?  @default("MTK001") // Sloc Code for ERP (e.g. MTK001, MTK003)
+  projectArea         String?  @default("SNY") // SNY or MPH
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -96,6 +99,7 @@ model StorageTank {
   incomingTransfers   StockTransfer[] @relation("TargetTank")
 
   @@index([tankCode])
+  @@index([site])
 }
 
 model FuelLog {
@@ -108,6 +112,10 @@ model FuelLog {
   fuelmanId        String
   tankId           String
   
+  // Multi-Site & Sloc
+  site             String      @default("SENYIUR") // SENYIUR or MUARA_PAHU
+  slocCode         String?     // Sloc Code for ERP upload
+
   // 16 Spreadsheet / Operational Columns
   unitCode         String      // NO UNIT
   category         String      // KATEGORI (PRODUKSI, SUPPORT, CONTRACTOR, PLANT SERVICE)
@@ -165,6 +173,7 @@ model FuelLog {
   @@index([dateStr])
   @@index([syncStatus])
   @@index([dispensedAt])
+  @@index([site])
 }
 
 model StockTransfer {

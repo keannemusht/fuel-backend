@@ -38,8 +38,8 @@ export const createApp = () => {
         return callback(null, true);
       }
 
-      // Default fallback: reflect the origin safely
-      return callback(null, true);
+      // Reject unknown external origin safely
+      return callback(new Error('Access blocked by CORS policy.'), false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -80,6 +80,19 @@ export const createApp = () => {
     },
   });
   app.use('/api', limiter);
+
+  // Dedicated strict limiter for login endpoint to block credential-stuffing
+  const authLimiter = rateLimitMiddleware({
+    windowMs: 15 * 60 * 1000,
+    max: 20, // max 20 login attempts per 15 minutes per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      success: false,
+      message: 'Too many authentication attempts. Please try again after 15 minutes.',
+    },
+  });
+  app.use('/api/auth/login', authLimiter);
 
   // Body Parsing
   app.use(express.json({ limit: '10mb' }));

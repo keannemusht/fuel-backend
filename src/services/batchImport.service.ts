@@ -503,7 +503,8 @@ export class BatchImportService {
               type: uData.type,
               lastKm: uData.lastKm,
               lastHm: uData.lastHm,
-              isActive: true,
+              // Keep historical fuel log units inactive so they do not pollute the active fleet dropdown
+              isActive: false,
             },
           });
           unitMap.set(codeKey, {

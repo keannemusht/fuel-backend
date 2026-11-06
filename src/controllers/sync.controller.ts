@@ -31,7 +31,7 @@ export class SyncController {
       const isConfigured = Boolean(
         config.googleSheets.serviceAccountEmail &&
         config.googleSheets.privateKey &&
-        config.googleSheets.spreadsheetId
+        config.googleSheets.spreadsheetId                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
       );
 
       return sendSuccess(res, {
