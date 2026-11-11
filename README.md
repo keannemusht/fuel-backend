@@ -131,6 +131,16 @@ Pusat ekspor data serbaguna di halaman Riwayat Bulanan (`/history`):
   - Bahasa Indonesia & English.
   - Industrial Dark Mode & Clean Slate Light Mode.
 
+### 8. Offline-First PWA & Auto-Sync Engine (Ketahanan Blank Spot)
+- **Progressive Web App (PWA)**: Aplikasi dapat di-install di tablet/smartphone operator lapangan (*Add to Home Screen*) dan dibuka tanpa koneksi internet.
+- **Service Worker (`sw.js`)**: Melakukan caching aset statis dan antarmuka halaman dispenser.
+- **IndexedDB Outbox Queue**:
+  - Saat berada di pit/area tanpa sinyal (*blank spot*), transaksi tetap dapat dicatat dan otomatis disimpan ke database browser lokal tablet.
+  - Master data unit dan tangki di-cache secara lokal agar dropdown tetap dapat dicari saat offline.
+- **Auto-Sync saat Sinyal Pulih**:
+  - Begitu perangkat mendeteksi sinyal internet (Wi-Fi posko/4G), sistem secara otomatis mengirimkan seluruh antrean transaksi tertunda ke server backend secara berurutan (FIFO) tanpa perlu input ulang manual.
+  - Terdapat indikator status koneksi (*pill*) di header dan modal antrean untuk melihat status setiap transaksi.
+
 ---
 
 ## �️ Tech Stack
