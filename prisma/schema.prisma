@@ -89,7 +89,7 @@ model StorageTank {
   fuelType            String   @default("HIGH SPEED DIESEL / SOLAR B35")
   tankType            String   @default("STATIONARY") // STATIONARY or MOBILE_TRUCK
   site                String   @default("SENYIUR") // SENYIUR or MUARA_PAHU
-  slocCode            String?  @default("MTK001") // Sloc Code for ERP (e.g. MTK001, MTK003)
+  slocCode            String?  @default("MTK004") // Sloc Code for ERP (e.g. MTK004 for SNY, MTK003 for MPH, FT001 for Fuel Trucks)
   projectArea         String?  @default("SNY") // SNY or MPH
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

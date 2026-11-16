@@ -125,7 +125,7 @@ export class TankService {
         fuelType: dto.fuelType || 'HIGH SPEED DIESEL / SOLAR B35',
         tankType: dto.tankType || 'STATIONARY',
         site: dto.site ? dto.site.trim().toUpperCase() : 'SENYIUR',
-        slocCode: dto.slocCode ? dto.slocCode.trim().toUpperCase() : (dto.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK001'),
+        slocCode: dto.slocCode ? dto.slocCode.trim().toUpperCase() : (dto.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK004'),
         projectArea: dto.projectArea ? dto.projectArea.trim().toUpperCase() : (dto.site === 'MUARA_PAHU' ? 'MPH' : 'SNY'),
       },
     });
@@ -388,7 +388,7 @@ export class TankService {
           totalFuelIn: volumeLiters,
           fuelmanName: currentUser?.fullName || 'Petugas',
           site: (sourceTank as any).site || 'SENYIUR',
-          slocCode: (sourceTank as any).slocCode || 'MTK001',
+          slocCode: (sourceTank as any).slocCode || ((sourceTank as any).site === 'MUARA_PAHU' ? 'MTK003' : 'FT001'),
           sourceType: 'FUEL_TRUCK',
           flowAwal: flowAwal ?? null,
           flowAkhir: flowAkhir ?? null,

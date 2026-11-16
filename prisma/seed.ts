@@ -109,7 +109,7 @@ async function main() {
       fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
       tankType: 'STATIONARY',
       site: 'SENYIUR',
-      slocCode: 'MTK001',
+      slocCode: 'MTK004',
     },
     {
       tankCode: 'FT_101',
@@ -120,7 +120,7 @@ async function main() {
       fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
       tankType: 'MOBILE_TRUCK',
       site: 'SENYIUR',
-      slocCode: 'MTK001',
+      slocCode: 'FT001',
     },
     {
       tankCode: 'FT_102',
@@ -131,7 +131,7 @@ async function main() {
       fuelType: 'HIGH SPEED DIESEL / SOLAR B35',
       tankType: 'MOBILE_TRUCK',
       site: 'SENYIUR',
-      slocCode: 'MTK001',
+      slocCode: 'FT001',
     },
     {
       tankCode: 'MAIN_MUARA_PAHU',

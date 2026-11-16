@@ -238,9 +238,78 @@ export class ExcelService {
   }
 
   /**
-   * Generates exact ERP CSV format matching 15-column ERP upload specification
+   * Resolves official ERP Storage Location code based on company SAP/ERP master data:
+   * - MAINTANK SENYIUR 01 -> MTK004
+   * - FUEL TRUCK 001 (FT 101 / FT 102) -> FT001
+   * - MAINTANK MUARA PAHU 01 -> MTK003
    */
-  static async generateErpCsv(filter?: { dateStr?: string; monthStr?: string; site?: string; delimiter?: string }): Promise<string> {
+  private static resolveErpSloc(log: any, defaultSite?: string): string {
+    const tank = log.tank;
+    const tankCode = (tank?.tankCode || '').toUpperCase();
+    const tankName = (tank?.name || '').toUpperCase();
+    const rawSloc = (log.slocCode || tank?.slocCode || '').toUpperCase().trim();
+    const site = (log.site || tank?.site || defaultSite || 'SENYIUR').toUpperCase();
+
+    // 1. Direct match with official ERP Sloc Codes (Storage Location SNY.xls & MP.xls)
+    if (rawSloc === 'MTK004') return 'MTK004';
+    if (rawSloc === 'MTK003') return 'MTK003';
+    if (rawSloc === 'FT001') return 'FT001';
+
+    // 2. Legacy MTK001 -> Official MTK004 (MAINTANK SENYIUR 01)
+    if (rawSloc === 'MTK001') return 'MTK004';
+
+    // 3. Legacy FTK001 / FTK002 -> Official FT001 (FUEL TRUCK 001)
+    if (rawSloc === 'FTK001' || rawSloc === 'FTK002') return 'FT001';
+
+    // 4. Tank Type / Name mapping
+    if (
+      tankCode.includes('FT_') ||
+      tankName.includes('FUEL TRUCK') ||
+      tankName.includes('FT 101') ||
+      tankName.includes('FT 102') ||
+      tank?.tankType === 'MOBILE_TRUCK' ||
+      log.sourceType === 'FUEL_TRUCK'
+    ) {
+      return 'FT001';
+    }
+
+    if (site === 'MUARA_PAHU' || tankCode.includes('MUARA') || tankName.includes('MUARA')) {
+      return 'MTK003';
+    }
+
+    // Default for Senyiur Main Tank
+    return 'MTK004';
+  }
+
+  /**
+   * Formats numbers cleanly for ERP import (integer if whole, e.g. 200, 180, 30, 20, 1)
+   */
+  private static formatErpNumber(val: number | null | undefined): string {
+    if (val === null || val === undefined || isNaN(val)) return '0';
+    const num = Number(val);
+    if (Number.isInteger(num) || num % 1 === 0) {
+      return Math.round(num).toString();
+    }
+    return parseFloat(num.toFixed(2)).toString();
+  }
+
+  /**
+   * Generates exact ERP CSV format matching UPLOAD_ERP_FUEL_SENYIUR_2026_11_TEST.csv
+   * Specification:
+   * - 15 Columns: Unit Code, Code Alias, Shift D/N*, Date YYYYMMDD*, Time HH:MM*, Opr/Drv*, Fuelman*, Broken 0/2*, Code Storage Loc., Hm/Km Current*, Hm/Km Last*, Material Code*, End Flow *, Start Flow *, Qty*
+   * - Default NO header row, pure CSV rows matching ERP upload specification
+   * - NO BOM, CRLF (\r\n) line endings
+   * - Clean unit codes without spaces (e.g. LV502, PM422)
+   * - Storage Location: MTK004 (Senyiur Main), FT001 (Fuel Truck), MTK003 (Muara Pahu)
+   * - Material Code: FL-01-0001 (BIO SOLAR B-0)
+   */
+  static async generateErpCsv(filter?: {
+    dateStr?: string;
+    monthStr?: string;
+    site?: string;
+    delimiter?: string;
+    includeHeader?: boolean;
+  }): Promise<string> {
     const where: any = {};
     if (filter?.dateStr) {
       where.dateStr = filter.dateStr;
@@ -269,6 +338,7 @@ export class ExcelService {
             site: true,
             slocCode: true,
             projectArea: true,
+            tankType: true,
           },
         },
       },
@@ -277,77 +347,97 @@ export class ExcelService {
 
     const sep = filter?.delimiter === 'semicolon' || filter?.delimiter === ';' ? ';' : ',';
 
-    const headers = [
-      'Unit Code',
-      'Code Alias',
-      'Shift D/N*',
-      'Date YYYYMMDD*',
-      'Time HH:MM*',
-      'Opr/Drv*',
-      'Fuelman*',
-      'Broken 0/2*',
-      'Code Storage Loc.',
-      'Hm/Km Current*',
-      'Hm/Km Last*',
-      'Material Code*',
-      'End Flow *',
-      'Start Flow *',
-      'Qty*',
-    ];
-
     const escapeCsv = (val: any): string => {
       if (val === null || val === undefined) return '';
-      const str = String(val);
+      const str = String(val).trim();
       if (str.includes(sep) || str.includes('"') || str.includes('\n') || str.includes('\r')) {
         return `"${str.replace(/"/g, '""')}"`;
       }
       return str;
     };
 
-    const formatNum = (num: number) => {
-      return Number.isInteger(num) ? num.toFixed(1) : String(num);
-    };
-
     const rows: string[] = [];
-    rows.push(headers.map(escapeCsv).join(sep));
+
+    if (filter?.includeHeader) {
+      const headers = [
+        'Unit Code',
+        'Code Alias',
+        'Shift D/N*',
+        'Date YYYYMMDD*',
+        'Time HH:MM*',
+        'Opr/Drv*',
+        'Fuelman*',
+        'Broken 0/2*',
+        'Code Storage Loc.',
+        'Hm/Km Current*',
+        'Hm/Km Last*',
+        'Material Code*',
+        'End Flow *',
+        'Start Flow *',
+        'Qty*',
+      ];
+      rows.push(headers.map(escapeCsv).join(sep));
+    }
 
     logs.forEach((log) => {
-      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift.toLowerCase().includes('night') ? 'N' : 'D';
-      const dateFormatted = log.dateStr ? log.dateStr.replace(/-/g, '') : '';
+      // 1. Clean Unit Code & Alias (stripping whitespace e.g. "LV 502" -> "LV502")
+      const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
+      const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
+
+      // 2. Shift (D / N)
+      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift?.toLowerCase().includes('night') ? 'N' : 'D';
+
+      // 3. Date (YYYYMMDD) & Time (HH:MM)
+      const dateFormatted = log.dateStr ? log.dateStr.replace(/[^0-9]/g, '') : '';
       const timeFormatted = log.jamStr ? log.jamStr.substring(0, 5) : '00:00';
+
+      // 4. Operator & Fuelman
+      const operator = (log.operator && log.operator.trim()) ? log.operator.trim() : 'Admin';
+      const fuelman = (log.fuelmanName && log.fuelmanName.trim()) ? log.fuelmanName.trim() : 'Admin';
+
+      // 5. Broken (0 = Normal, 2 = Bypass/Broken)
       const isBroken = log.bypassValidation ? '2' : '0';
-      const sloc = (log.tank as any)?.slocCode || (filter?.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK001');
+
+      // 6. Code Storage Loc. (MTK004 / FT001 / MTK003)
+      const sloc = ExcelService.resolveErpSloc(log, filter?.site);
+
+      // 7. Meter Current & Last
       const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
       const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
+
+      // 8. Material Code (FL-01-0001 for BIO SOLAR B-0)
       const materialCode = 'FL-01-0001';
-      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined ? log.flowAkhir : (log.volumeLiters > 0 ? log.volumeLiters : 0);
+
+      // 9. Flow & Qty
+      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined && log.flowAkhir > 0
+        ? log.flowAkhir
+        : (log.volumeLiters > 0 ? log.volumeLiters : 0);
       const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
       const qty = log.volumeLiters;
-      const alias = log.unit?.plateNumber || log.unitCode;
 
       const rowValues = [
-        log.unitCode,
+        cleanUnitCode,
         alias,
         shiftCode,
         dateFormatted,
         timeFormatted,
-        log.operator || '-',
-        log.fuelmanName || '-',
+        operator,
+        fuelman,
         isBroken,
         sloc,
-        formatNum(currentMeter),
-        formatNum(lastMeter),
+        ExcelService.formatErpNumber(currentMeter),
+        ExcelService.formatErpNumber(lastMeter),
         materialCode,
-        formatNum(endFlow),
-        formatNum(startFlow),
-        formatNum(qty),
+        ExcelService.formatErpNumber(endFlow),
+        ExcelService.formatErpNumber(startFlow),
+        ExcelService.formatErpNumber(qty),
       ];
 
       rows.push(rowValues.map(escapeCsv).join(sep));
     });
 
-    // UTF-8 BOM + CRLF
-    return '\uFEFF' + rows.join('\r\n');
+    // Pure CRLF line endings without UTF-8 BOM, matching UPLOAD_ERP_FUEL_SENYIUR_2026_11_TEST.csv
+    return rows.join('\r\n') + (rows.length > 0 ? '\r\n' : '');
   }
 
   /**
@@ -382,6 +472,7 @@ export class ExcelService {
             site: true,
             slocCode: true,
             projectArea: true,
+            tankType: true,
           },
         },
       },
@@ -454,35 +545,40 @@ export class ExcelService {
     });
 
     logs.forEach((log) => {
-      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift.toLowerCase().includes('night') ? 'N' : 'D';
-      const dateFormatted = log.dateStr ? log.dateStr.replace(/-/g, '') : '';
+      const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
+      const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
+      const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift?.toLowerCase().includes('night') ? 'N' : 'D';
+      const dateFormatted = log.dateStr ? log.dateStr.replace(/[^0-9]/g, '') : '';
       const timeFormatted = log.jamStr ? log.jamStr.substring(0, 5) : '00:00';
+      const operator = (log.operator && log.operator.trim()) ? log.operator.trim() : 'Admin';
+      const fuelman = (log.fuelmanName && log.fuelmanName.trim()) ? log.fuelmanName.trim() : 'Admin';
       const isBroken = log.bypassValidation ? '2' : '0';
-      const sloc = (log.tank as any)?.slocCode || (filter?.site === 'MUARA_PAHU' ? 'MTK003' : 'MTK001');
+      const sloc = ExcelService.resolveErpSloc(log, filter?.site);
       const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
       const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
       const materialCode = 'FL-01-0001';
-      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined ? log.flowAkhir : (log.volumeLiters > 0 ? log.volumeLiters : 0);
+      const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined && log.flowAkhir > 0
+        ? log.flowAkhir
+        : (log.volumeLiters > 0 ? log.volumeLiters : 0);
       const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
       const qty = log.volumeLiters;
-      const alias = log.unit?.plateNumber || log.unitCode;
 
       const row = sheet.addRow([
-        log.unitCode,
+        cleanUnitCode,
         alias,
         shiftCode,
         dateFormatted,
         timeFormatted,
-        log.operator || '-',
-        log.fuelmanName || '-',
+        operator,
+        fuelman,
         isBroken,
         sloc,
-        currentMeter,
-        lastMeter,
+        Number(ExcelService.formatErpNumber(currentMeter)),
+        Number(ExcelService.formatErpNumber(lastMeter)),
         materialCode,
-        endFlow,
-        startFlow,
-        qty,
+        Number(ExcelService.formatErpNumber(endFlow)),
+        Number(ExcelService.formatErpNumber(startFlow)),
+        Number(ExcelService.formatErpNumber(qty)),
       ]);
 
       row.height = 20;
@@ -519,15 +615,20 @@ export class ExcelService {
     ];
     whSheet.getRow(1).font = { name: 'Calibri', size: 10, bold: true };
 
-    const allTanks = await prisma.storageTank.findMany({ orderBy: { tankCode: 'asc' } });
-    allTanks.forEach((tank, idx) => {
+    const warehouseMaster = [
+      { code: 'MTK004', name: 'MAINTANK SENYIUR 01', area: 'SNY' },
+      { code: 'FT001', name: 'FUEL TRUCK 001', area: 'SNY' },
+      { code: 'MTK003', name: 'MAINTANK MUARA PAHU 01', area: 'MPH' },
+    ];
+
+    warehouseMaster.forEach((item, idx) => {
       whSheet.addRow([
         idx + 1,
-        (tank as any).slocCode || 'MTK001',
-        tank.name,
+        item.code,
+        item.name,
         'FL-01-0001',
-        tank.fuelType || 'BIO SOLAR B-0',
-        (tank as any).projectArea || 'SNY',
+        'BIO SOLAR B-0',
+        item.area,
         0,
         'V001',
       ]);

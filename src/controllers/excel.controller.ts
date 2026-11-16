@@ -82,12 +82,13 @@ export class ExcelController {
 
   static async exportErpCsv(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { dateStr, monthStr, site, delimiter } = req.query;
+      const { dateStr, monthStr, site, delimiter, header } = req.query;
       const csvContent = await ExcelService.generateErpCsv({
         dateStr: dateStr as string,
         monthStr: monthStr as string,
         site: site as string,
         delimiter: delimiter as string,
+        includeHeader: header === 'true',
       });
 
       const siteLabel = site === 'MUARA_PAHU' ? 'MUARAPAHU' : site === 'SENYIUR' ? 'SENYIUR' : 'ALL_SITE';
