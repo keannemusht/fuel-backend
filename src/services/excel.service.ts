@@ -421,17 +421,38 @@ export class ExcelService {
       const sloc = ExcelService.resolveErpSloc(log, filter?.site);
 
       // 7. Meter Current & Last
-      const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
-      const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
+      // Primary meter: use HM for units that track HM. If unit tracks KM only (e.g. Light Vehicle), use KM.
+      let currentMeter = 0;
+      let lastMeter = 0;
+
+      if (log.unit?.hasHm) {
+        currentMeter = log.currentHm;
+        lastMeter = log.previousHm;
+      } else if (log.unit?.hasKm) {
+        currentMeter = log.currentKm;
+        lastMeter = log.previousKm;
+      } else {
+        if (log.currentHm > 0 || log.previousHm > 0) {
+          currentMeter = log.currentHm;
+          lastMeter = log.previousHm;
+        } else {
+          currentMeter = log.currentKm;
+          lastMeter = log.previousKm;
+        }
+      }
 
       // 8. Material Code (FL-01-0001 for BIO SOLAR B-0)
       const materialCode = 'FL-01-0001';
 
       // 9. Flow & Qty
+      // User requirement: Field data does not have start/end flow, only QTY OUT.
+      // Column 13 (End Flow): Qty Out / volumeLiters
+      // Column 14 (Start Flow): EMPTY (tidak perlu diisi)
+      // Column 15 (Qty): Qty Out / volumeLiters
       const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined && log.flowAkhir > 0
         ? log.flowAkhir
         : (log.volumeLiters > 0 ? log.volumeLiters : 0);
-      const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
+      const startFlow = ''; // Start Flow tidak perlu diisi
       const qty = log.volumeLiters;
 
       const rowValues = [
@@ -448,7 +469,7 @@ export class ExcelService {
         ExcelService.formatErpNumber(lastMeter),
         materialCode,
         ExcelService.formatErpNumber(endFlow),
-        ExcelService.formatErpNumber(startFlow),
+        startFlow,
         ExcelService.formatErpNumber(qty),
       ];
 
@@ -590,13 +611,33 @@ export class ExcelService {
       const fuelman = (log.fuelmanName && log.fuelmanName.trim()) ? log.fuelmanName.trim() : 'Admin';
       const isBroken = log.bypassValidation ? '2' : '0';
       const sloc = ExcelService.resolveErpSloc(log, filter?.site);
-      const currentMeter = log.currentHm > 0 ? log.currentHm : (log.currentKm > 0 ? log.currentKm : (log.currentKwh > 0 ? log.currentKwh : 0));
-      const lastMeter = log.previousHm > 0 ? log.previousHm : (log.previousKm > 0 ? log.previousKm : (log.previousKwh > 0 ? log.previousKwh : 0));
+
+      // Meter Current & Last
+      let currentMeter = 0;
+      let lastMeter = 0;
+
+      if (log.unit?.hasHm) {
+        currentMeter = log.currentHm;
+        lastMeter = log.previousHm;
+      } else if (log.unit?.hasKm) {
+        currentMeter = log.currentKm;
+        lastMeter = log.previousKm;
+      } else {
+        if (log.currentHm > 0 || log.previousHm > 0) {
+          currentMeter = log.currentHm;
+          lastMeter = log.previousHm;
+        } else {
+          currentMeter = log.currentKm;
+          lastMeter = log.previousKm;
+        }
+      }
+
       const materialCode = 'FL-01-0001';
+
+      // Flow & Qty: Start Flow tidak perlu diisi
       const endFlow = log.flowAkhir !== null && log.flowAkhir !== undefined && log.flowAkhir > 0
         ? log.flowAkhir
         : (log.volumeLiters > 0 ? log.volumeLiters : 0);
-      const startFlow = log.flowAwal !== null && log.flowAwal !== undefined ? log.flowAwal : 0;
       const qty = log.volumeLiters;
 
       const row = sheet.addRow([
@@ -613,7 +654,7 @@ export class ExcelService {
         Number(ExcelService.formatErpNumber(lastMeter)),
         materialCode,
         Number(ExcelService.formatErpNumber(endFlow)),
-        Number(ExcelService.formatErpNumber(startFlow)),
+        null, // Start Flow dibiarkan kosong
         Number(ExcelService.formatErpNumber(qty)),
       ]);
 
