@@ -12,10 +12,11 @@ export class ReconciliationController {
    */
   static async getHealth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { monthStr, site } = req.query;
+      const { monthStr, site, lang } = req.query;
       const result = await ReconciliationService.auditMonth({
         monthStr: monthStr as string,
         site: site as string,
+        lang: (lang as string) || 'id',
       });
 
       return sendSuccess(res, result, 'Audit integritas data berhasil.');

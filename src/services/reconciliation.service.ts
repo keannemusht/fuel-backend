@@ -47,7 +47,8 @@ export class ReconciliationService {
    * Evaluates logs for a given month and detects all data anomalies using bidirectional timeline analysis.
    * Protects the true physical vehicle baseline (lastHm / lastKm) so future dispenser inputs are never blocked.
    */
-  static async auditMonth(filter: { monthStr?: string; site?: string }): Promise<ReconciliationAuditResult> {
+  static async auditMonth(filter: { monthStr?: string; site?: string; lang?: string }): Promise<ReconciliationAuditResult> {
+    const isEn = filter?.lang === 'en';
     const where: any = {};
     if (filter?.monthStr) {
       where.dateStr = { startsWith: filter.monthStr };
@@ -127,11 +128,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'NON_DISPENSE',
-            description: `Volume dispense ${log.volumeLiters} L <= 0 (Baris Saldo Awal / Inbound Refill)`,
+            description: isEn
+              ? `Dispense volume ${log.volumeLiters} L <= 0 (Opening Balance / Inbound Refill line)`
+              : `Volume dispense ${log.volumeLiters} L <= 0 (Baris Saldo Awal / Inbound Refill)`,
             proposedPrevious: prev,
             proposedCurrent: cur,
             confidence: 'HIGH',
-            fixStrategy: 'Keluarkan baris dari modul pemakaian kendaraan ERP',
+            fixStrategy: isEn
+              ? 'Exclude row from ERP vehicle consumption module'
+              : 'Keluarkan baris dari modul pemakaian kendaraan ERP',
           });
           continue;
         }
@@ -155,11 +160,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'TIMESTAMP_DUPLICATE',
-            description: `Transaksi tercatat ganda pada waktu persis ${log.dateStr} ${log.jamStr}`,
+            description: isEn
+              ? `Duplicate transaction recorded at exact timestamp ${log.dateStr} ${log.jamStr}`
+              : `Transaksi tercatat ganda pada waktu persis ${log.dateStr} ${log.jamStr}`,
             proposedPrevious: prev,
             proposedCurrent: cur,
             confidence: 'MEDIUM',
-            fixStrategy: 'Sesuaikan jam transaksi selisih +5 menit',
+            fixStrategy: isEn
+              ? 'Physically verify fuelman slip to confirm duplicate transaction validity'
+              : 'Verifikasi fisik nota fuelman untuk memastikan keabsahan transaksi ganda',
           });
         }
 
@@ -184,11 +193,15 @@ export class ReconciliationService {
               previousMeter: 0,
               deltaMeter: 0,
               anomalyType: 'METER_ZERO',
-              description: `Meter kosong di antara ${prevCur} dan ${nextCur} -> Usulan interpolasi: ${interpolated}`,
+              description: isEn
+                ? `Blank meter between ${prevCur} and ${nextCur} -> Proposed interpolation: ${interpolated}`
+                : `Meter kosong di antara ${prevCur} dan ${nextCur} -> Usulan interpolasi: ${interpolated}`,
               proposedPrevious: prevCur,
               proposedCurrent: interpolated,
               confidence: 'HIGH',
-              fixStrategy: 'Isi estimasi wajar agar tidak bolong dan menjaga batas last meter unit',
+              fixStrategy: isEn
+                ? 'Fill reasonable estimate to prevent gaps and protect unit last meter threshold'
+                : 'Isi estimasi wajar agar tidak bolong dan menjaga batas last meter unit',
             });
             effectiveRunning = interpolated;
           } else {
@@ -208,11 +221,15 @@ export class ReconciliationService {
               previousMeter: 0,
               deltaMeter: 0,
               anomalyType: 'METER_ZERO',
-              description: `Peralatan tanpa meter fisik (Genset / Tower Lamp)`,
+              description: isEn
+                ? 'Equipment without physical meter (Genset / Tower Lamp)'
+                : 'Peralatan tanpa meter fisik (Genset / Tower Lamp)',
               proposedPrevious: 0,
               proposedCurrent: 0,
               confidence: 'HIGH',
-              fixStrategy: 'Pertahankan 0 di DB fisik; sanitasi virtual (Broken=2) diterapkan otomatis saat ekspor Syshab',
+              fixStrategy: isEn
+                ? 'Retain 0 in physical DB; virtual sanitation (Broken=2) is automatically applied during Syshab export'
+                : 'Pertahankan 0 di DB fisik; sanitasi virtual (Broken=2) diterapkan otomatis saat ekspor Syshab',
             });
           }
           continue;
@@ -254,11 +271,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'METER_JUMP',
-            description: `Lonjakan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
+            description: isEn
+              ? `Isolated typo spike (${cur}) between ${prevCur} and ${nextCur}`
+              : `Lonjakan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
             proposedPrevious: prevCur,
             proposedCurrent: propCur,
             confidence: 'HIGH',
-            fixStrategy: `Koreksi typo digit lonjakan ke nilai riil armada (${propCur}) agar batas last meter tidak melonjak`,
+            fixStrategy: isEn
+              ? `Correct digit spike typo to fleet's real reading (${propCur}) to prevent inflating unit's last meter`
+              : `Koreksi typo digit lonjakan ke nilai riil armada (${propCur}) agar batas last meter tidak melonjak`,
           });
           effectiveRunning = propCur;
           continue;
@@ -295,11 +316,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'METER_DECREASE',
-            description: `Penurunan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
+            description: isEn
+              ? `Isolated typo decrease (${cur}) between ${prevCur} and ${nextCur}`
+              : `Penurunan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
             proposedPrevious: prevCur,
             proposedCurrent: propCur,
             confidence: 'HIGH',
-            fixStrategy: `Koreksi typo penurunan ke nilai riil armada (${propCur}) sesuai lintasan fisik unit`,
+            fixStrategy: isEn
+              ? `Correct decrease typo to fleet's real reading (${propCur}) along vehicle physical trajectory`
+              : `Koreksi typo penurunan ke nilai riil armada (${propCur}) sesuai lintasan fisik unit`,
           });
           effectiveRunning = propCur;
           continue;
@@ -324,11 +349,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'METER_EQUAL',
-            description: `Meter sama persis (${cur}) / unit standby (selisih 0 jam/km)`,
+            description: isEn
+              ? `Identical meter reading (${cur}) / standby unit (0 hr/km delta)`
+              : `Meter sama persis (${cur}) / unit standby (selisih 0 jam/km)`,
             proposedPrevious: prev,
             proposedCurrent: cur,
             confidence: 'HIGH',
-            fixStrategy: 'Pertahankan nilai fisik di DB; saat ekspor Syshab otomatis disesuaikan secara virtual',
+            fixStrategy: isEn
+              ? 'Retain physical value in DB; automatically adjusted virtually during Syshab export'
+              : 'Pertahankan nilai fisik di DB; saat ekspor Syshab otomatis disesuaikan secara virtual',
           });
           effectiveRunning = cur;
           continue;
@@ -353,11 +382,15 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'METER_DECREASE',
-            description: `Meter turun dari ${prevCur} ke ${cur}`,
+            description: isEn
+              ? `Meter decreased from ${prevCur} to ${cur}`
+              : `Meter turun dari ${prevCur} ke ${cur}`,
             proposedPrevious: prevCur,
             proposedCurrent: cur,
             confidence: 'MEDIUM',
-            fixStrategy: 'Verifikasi fisik catatan penggantian meter mesin/alat di lapangan',
+            fixStrategy: isEn
+              ? 'Physically verify replacement record of dashboard meter/gauge on site'
+              : 'Verifikasi fisik catatan penggantian meter mesin/alat di lapangan',
           });
           effectiveRunning = cur;
           continue;
