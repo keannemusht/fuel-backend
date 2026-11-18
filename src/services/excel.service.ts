@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { prisma } from '../config/prisma.js';
+import { MasterEquipmentService } from './masterEquipment.service.js';
 
 export class ExcelService {
   /**
@@ -309,6 +310,7 @@ export class ExcelService {
     site?: string;
     delimiter?: string;
     includeHeader?: boolean;
+    scope?: string;
   }): Promise<string> {
     const where: any = {};
     if (filter?.dateStr) {
@@ -358,6 +360,28 @@ export class ExcelService {
 
     const rows: string[] = [];
 
+    await MasterEquipmentService.init();
+    const effectiveSite = filter?.site && filter.site !== 'ALL' ? filter.site : 'SENYIUR';
+    const rawScope = (filter?.scope || 'site_only').toLowerCase().trim();
+
+    // Filter logs according to ERP Master Equipment rules
+    // UNREGISTERED vehicles (e.g. LV 002 BPU, contractor pickups, dummy logs) are ALWAYS excluded
+    const eligibleLogs = logs.filter((log) => {
+      const classification = MasterEquipmentService.classifyLog(log, effectiveSite);
+      if (classification === 'UNREGISTERED') {
+        return false;
+      }
+
+      if (rawScope === 'other' || rawScope === 'other_consumption') {
+        return classification === 'OTHER_CONSUMPTION';
+      }
+      if (rawScope === 'all' || rawScope === 'all_registered') {
+        return true;
+      }
+      // Default: site_only
+      return classification === 'SITE_INTERNAL';
+    });
+
     if (filter?.includeHeader) {
       const headers = [
         'Unit Code',
@@ -379,7 +403,7 @@ export class ExcelService {
       rows.push(headers.map(escapeCsv).join(sep));
     }
 
-    logs.forEach((log) => {
+    eligibleLogs.forEach((log) => {
       // 1. Clean Unit Code & Alias (stripping whitespace e.g. "LV 502" -> "LV502")
       const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
       const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
@@ -443,7 +467,7 @@ export class ExcelService {
   /**
    * Generates exact ERP format matching "Format Upload Fuel.xls" / "Format Upload & Sloc.Fuel.xls"
    */
-  static async generateErpReport(filter?: { dateStr?: string; monthStr?: string; site?: string }) {
+  static async generateErpReport(filter?: { dateStr?: string; monthStr?: string; site?: string; scope?: string }) {
     const where: any = {};
     if (filter?.dateStr) {
       where.dateStr = filter.dateStr;
@@ -544,7 +568,27 @@ export class ExcelService {
       };
     });
 
-    logs.forEach((log) => {
+    await MasterEquipmentService.init();
+    const effectiveSite = filter?.site && filter.site !== 'ALL' ? filter.site : 'SENYIUR';
+    const rawScope = (filter?.scope || 'site_only').toLowerCase().trim();
+
+    // Filter logs according to ERP Master Equipment rules
+    const eligibleLogs = logs.filter((log) => {
+      const classification = MasterEquipmentService.classifyLog(log, effectiveSite);
+      if (classification === 'UNREGISTERED') {
+        return false;
+      }
+
+      if (rawScope === 'other' || rawScope === 'other_consumption') {
+        return classification === 'OTHER_CONSUMPTION';
+      }
+      if (rawScope === 'all' || rawScope === 'all_registered') {
+        return true;
+      }
+      return classification === 'SITE_INTERNAL';
+    });
+
+    eligibleLogs.forEach((log) => {
       const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
       const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
       const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift?.toLowerCase().includes('night') ? 'N' : 'D';
@@ -635,5 +679,68 @@ export class ExcelService {
     });
 
     return workbook;
+  }
+  /**
+   * Generates a telemetry breakdown summary for ERP exports:
+   * - siteInternal: Units registered in current site master equipment
+   * - otherConsumption: Units registered in other site master equipment (e.g. MP units at SNY)
+   * - unregistered: Contractor/unregistered units excluded from ERP (e.g. LV 002 BPU)
+   */
+  static async getErpSummary(filter?: { dateStr?: string; monthStr?: string; site?: string }) {
+    const where: any = {};
+    if (filter?.dateStr) {
+      where.dateStr = filter.dateStr;
+    } else if (filter?.monthStr) {
+      where.dateStr = { startsWith: filter.monthStr };
+    }
+    if (filter?.site && filter.site !== 'ALL') {
+      where.site = filter.site;
+    }
+
+    const logs = await prisma.fuelLog.findMany({
+      where,
+      select: {
+        id: true,
+        unitCode: true,
+        volumeLiters: true,
+        site: true,
+      },
+    });
+
+    await MasterEquipmentService.init();
+    const effectiveSite = filter?.site && filter.site !== 'ALL' ? filter.site : 'SENYIUR';
+
+    const summary = {
+      site: effectiveSite,
+      totalLogs: logs.length,
+      siteInternal: { count: 0, volume: 0 },
+      otherConsumption: { count: 0, volume: 0 },
+      allRegistered: { count: 0, volume: 0 },
+      unregistered: { count: 0, volume: 0, sampleUnits: [] as string[] },
+    };
+
+    const unregisteredUnits = new Set<string>();
+
+    logs.forEach((log) => {
+      const cls = MasterEquipmentService.classifyLog(log, effectiveSite);
+      if (cls === 'SITE_INTERNAL') {
+        summary.siteInternal.count++;
+        summary.siteInternal.volume += log.volumeLiters;
+        summary.allRegistered.count++;
+        summary.allRegistered.volume += log.volumeLiters;
+      } else if (cls === 'OTHER_CONSUMPTION') {
+        summary.otherConsumption.count++;
+        summary.otherConsumption.volume += log.volumeLiters;
+        summary.allRegistered.count++;
+        summary.allRegistered.volume += log.volumeLiters;
+      } else {
+        summary.unregistered.count++;
+        summary.unregistered.volume += log.volumeLiters;
+        unregisteredUnits.add(log.unitCode);
+      }
+    });
+
+    summary.unregistered.sampleUnits = Array.from(unregisteredUnits).slice(0, 15);
+    return summary;
   }
 }

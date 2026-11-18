@@ -5,6 +5,7 @@ import { GoogleSheetsService } from './googleSheets.service.js';
 import { AuditAction, Role, SyncStatus, UnitCategory } from '@prisma/client';
 import { AuthenticatedUser, SpreadsheetRowData } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { MasterEquipmentService } from './masterEquipment.service.js';
 
 export interface CreateFuelDispenseDto {
   unitId: string;
@@ -1389,8 +1390,14 @@ export class FuelService {
       }),
     ]);
 
+    const effectiveSite = query.site && query.site !== 'ALL' ? query.site : 'SENYIUR';
+    const logsWithClassification = logs.map((log) => ({
+      ...log,
+      erpClassification: MasterEquipmentService.classifyLog(log, effectiveSite),
+    }));
+
     return {
-      data: logs,
+      data: logsWithClassification,
       meta: {
         page,
         limit,

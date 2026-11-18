@@ -7,6 +7,28 @@ import { AppError } from '../utils/AppError.js';
 import { AuditService } from '../services/audit.service.js';
 import { AuditAction } from '@prisma/client';
 
+
+const MONTH_NAMES_ERP = [
+  'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+  'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
+];
+
+function formatErpTimeLabel(dateStr?: string, monthStr?: string): string {
+  if (dateStr) return `DATE_${dateStr}`;
+  if (monthStr) {
+    const parts = monthStr.split('-');
+    if (parts.length === 2) {
+      const year = parts[0];
+      const mIdx = parseInt(parts[1], 10) - 1;
+      if (mIdx >= 0 && mIdx < 12) {
+        return `${year}_${MONTH_NAMES_ERP[mIdx]}`;
+      }
+    }
+    return `MONTH_${monthStr}`;
+  }
+  return 'ALL';
+}
+
 export class ExcelController {
   static async exportShiftExcel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
@@ -44,7 +66,7 @@ export class ExcelController {
 
   static async exportErpExcel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { dateStr, monthStr, site, format } = req.query;
+      const { dateStr, monthStr, site, format, scope } = req.query;
 
       if (format === 'csv') {
         return ExcelController.exportErpCsv(req, res, next);
@@ -54,11 +76,17 @@ export class ExcelController {
         dateStr: dateStr as string,
         monthStr: monthStr as string,
         site: site as string,
+        scope: scope as string,
       });
 
       const siteLabel = site === 'MUARA_PAHU' ? 'MUARAPAHU' : site === 'SENYIUR' ? 'SENYIUR' : 'ALL_SITE';
-      const timeLabel = dateStr ? `DATE_${dateStr}` : monthStr ? `MONTH_${monthStr}` : 'ALL';
-      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}_${timeLabel}.xlsx`;
+      const timeLabel = formatErpTimeLabel(dateStr as string, monthStr as string);
+      const scopeSuffix = scope === 'other_consumption' || scope === 'other'
+        ? '_OTHER_CONSUMPTION'
+        : scope === 'all_registered' || scope === 'all'
+        ? '_ALL_ERP'
+        : '';
+      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}${scopeSuffix}_${timeLabel}.xlsx`;
 
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -82,18 +110,24 @@ export class ExcelController {
 
   static async exportErpCsv(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { dateStr, monthStr, site, delimiter, header } = req.query;
+      const { dateStr, monthStr, site, delimiter, header, scope } = req.query;
       const csvContent = await ExcelService.generateErpCsv({
         dateStr: dateStr as string,
         monthStr: monthStr as string,
         site: site as string,
         delimiter: delimiter as string,
         includeHeader: header === 'true',
+        scope: scope as string,
       });
 
       const siteLabel = site === 'MUARA_PAHU' ? 'MUARAPAHU' : site === 'SENYIUR' ? 'SENYIUR' : 'ALL_SITE';
-      const timeLabel = dateStr ? `DATE_${dateStr}` : monthStr ? `MONTH_${monthStr}` : 'ALL';
-      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}_${timeLabel}.csv`;
+      const timeLabel = formatErpTimeLabel(dateStr as string, monthStr as string);
+      const scopeSuffix = scope === 'other_consumption' || scope === 'other'
+        ? '_OTHER_CONSUMPTION'
+        : scope === 'all_registered' || scope === 'all'
+        ? '_ALL_ERP'
+        : '';
+      const fileName = `UPLOAD_ERP_FUEL_${siteLabel}${scopeSuffix}_${timeLabel}.csv`;
 
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -155,6 +189,19 @@ export class ExcelController {
 
       await workbook.xlsx.write(res);
       res.end();
+    } catch (error) {
+      next(error);
+    }
+  }
+  static async getErpSummary(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const { dateStr, monthStr, site } = req.query;
+      const summary = await ExcelService.getErpSummary({
+        dateStr: dateStr as string,
+        monthStr: monthStr as string,
+        site: site as string,
+      });
+      return sendSuccess(res, summary, 'ERP summary retrieved successfully');
     } catch (error) {
       next(error);
     }
