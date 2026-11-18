@@ -7,6 +7,7 @@ import userRoutes from './user.routes.js';
 import auditRoutes from './audit.routes.js';
 import syncRoutes from './sync.routes.js';
 import excelRoutes from './excel.routes.js';
+import reconciliationRoutes from './reconciliation.routes.js';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.use('/tanks', tankRoutes);
 router.use('/audit', auditRoutes);
 router.use('/sync', syncRoutes);
 router.use('/excel', excelRoutes);
+router.use('/reconciliation', reconciliationRoutes);
 
 router.get('/health', (req, res) => {
   res.status(200).json({

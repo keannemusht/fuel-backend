@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { prisma } from '../config/prisma.js';
 import { MasterEquipmentService } from './masterEquipment.service.js';
+import { ReconciliationService } from './reconciliation.service.js';
 
 export class ExcelService {
   /**
@@ -377,6 +378,10 @@ export class ExcelService {
       return classification === 'SITE_INTERNAL';
     });
 
+    // Auto-Sanitize virtual layer: Guarantees strict chronological monotonicity,
+    // eliminates cur <= prev, handles 0-meters safely, and excludes non-dispense rows for ERP acceptance
+    const sanitizedLogs = ReconciliationService.autoSanitizeForErp(eligibleLogs);
+
     if (filter?.includeHeader) {
       const headers = [
         'Unit Code',
@@ -398,7 +403,7 @@ export class ExcelService {
       rows.push(headers.map(escapeCsv).join(sep));
     }
 
-    eligibleLogs.forEach((log) => {
+    sanitizedLogs.forEach((log) => {
       // 1. Clean Unit Code & Alias (stripping whitespace e.g. "LV 502" -> "LV502")
       const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
       const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
@@ -415,31 +420,14 @@ export class ExcelService {
       const fuelman = (log.fuelmanName && log.fuelmanName.trim()) ? log.fuelmanName.trim() : 'Admin';
 
       // 5. Broken (0 = Normal, 2 = Bypass/Broken)
-      const isBroken = log.bypassValidation ? '2' : '0';
+      const isBroken = log.sanitizedBypass ? '2' : (log.bypassValidation ? '2' : '0');
 
       // 6. Code Storage Loc. (MTK004 / FT001 / MTK003)
       const sloc = ExcelService.resolveErpSloc(log, filter?.site);
 
-      // 7. Meter Current & Last
-      // Primary meter: use HM for units that track HM. If unit tracks KM only (e.g. Light Vehicle), use KM.
-      let currentMeter = 0;
-      let lastMeter = 0;
-
-      if (log.unit?.hasHm) {
-        currentMeter = log.currentHm;
-        lastMeter = log.previousHm;
-      } else if (log.unit?.hasKm) {
-        currentMeter = log.currentKm;
-        lastMeter = log.previousKm;
-      } else {
-        if (log.currentHm > 0 || log.previousHm > 0) {
-          currentMeter = log.currentHm;
-          lastMeter = log.previousHm;
-        } else {
-          currentMeter = log.currentKm;
-          lastMeter = log.previousKm;
-        }
-      }
+      // 7. Meter Current & Last (Using sanitized monotonic meters)
+      const currentMeter = log.sanitizedCur !== undefined ? log.sanitizedCur : 0;
+      const lastMeter = log.sanitizedPrev !== undefined ? log.sanitizedPrev : 0;
 
       // 8. Material Code (FL-01-0001 for BIO SOLAR B-0)
       const materialCode = 'FL-01-0001';
@@ -601,7 +589,11 @@ export class ExcelService {
       return classification === 'SITE_INTERNAL';
     });
 
-    eligibleLogs.forEach((log) => {
+    // Auto-Sanitize virtual layer: Guarantees strict chronological monotonicity,
+    // eliminates cur <= prev, handles 0-meters safely, and excludes non-dispense rows for ERP acceptance
+    const sanitizedLogs = ReconciliationService.autoSanitizeForErp(eligibleLogs);
+
+    sanitizedLogs.forEach((log) => {
       const cleanUnitCode = log.unitCode ? log.unitCode.replace(/\s+/g, '') : '';
       const alias = log.unit?.plateNumber ? log.unit.plateNumber.replace(/\s+/g, '') : cleanUnitCode;
       const shiftCode = log.shift === 'SHIFT 2' || log.shift === '2' || log.shift?.toLowerCase().includes('night') ? 'N' : 'D';
@@ -609,28 +601,12 @@ export class ExcelService {
       const timeFormatted = log.jamStr ? log.jamStr.substring(0, 5) : '00:00';
       const operator = (log.operator && log.operator.trim()) ? log.operator.trim() : 'Admin';
       const fuelman = (log.fuelmanName && log.fuelmanName.trim()) ? log.fuelmanName.trim() : 'Admin';
-      const isBroken = log.bypassValidation ? '2' : '0';
+      const isBroken = log.sanitizedBypass ? '2' : (log.bypassValidation ? '2' : '0');
       const sloc = ExcelService.resolveErpSloc(log, filter?.site);
 
-      // Meter Current & Last
-      let currentMeter = 0;
-      let lastMeter = 0;
-
-      if (log.unit?.hasHm) {
-        currentMeter = log.currentHm;
-        lastMeter = log.previousHm;
-      } else if (log.unit?.hasKm) {
-        currentMeter = log.currentKm;
-        lastMeter = log.previousKm;
-      } else {
-        if (log.currentHm > 0 || log.previousHm > 0) {
-          currentMeter = log.currentHm;
-          lastMeter = log.previousHm;
-        } else {
-          currentMeter = log.currentKm;
-          lastMeter = log.previousKm;
-        }
-      }
+      // Meter Current & Last (Using sanitized monotonic meters)
+      const currentMeter = log.sanitizedCur !== undefined ? log.sanitizedCur : 0;
+      const lastMeter = log.sanitizedPrev !== undefined ? log.sanitizedPrev : 0;
 
       const materialCode = 'FL-01-0001';
 
