@@ -364,21 +364,16 @@ export class ExcelService {
     const effectiveSite = filter?.site && filter.site !== 'ALL' ? filter.site : 'SENYIUR';
     const rawScope = (filter?.scope || 'site_only').toLowerCase().trim();
 
-    // Filter logs according to ERP Master Equipment rules
-    // UNREGISTERED vehicles (e.g. LV 002 BPU, contractor pickups, dummy logs) are ALWAYS excluded
+    // Filter logs according to Syshab ERP rules:
+    // 2 Options:
+    // 1. Multi Entry Upload Syshab: ONLY equipment in current site Master Equipment (SITE_INTERNAL)
+    // 2. Other Consumption: ALL equipment NOT in current site Master Equipment (cross-site + unregistered/contractors)
     const eligibleLogs = logs.filter((log) => {
       const classification = MasterEquipmentService.classifyLog(log, effectiveSite);
-      if (classification === 'UNREGISTERED') {
-        return false;
-      }
-
       if (rawScope === 'other' || rawScope === 'other_consumption') {
-        return classification === 'OTHER_CONSUMPTION';
+        return classification === 'OTHER_CONSUMPTION' || classification === 'UNREGISTERED';
       }
-      if (rawScope === 'all' || rawScope === 'all_registered') {
-        return true;
-      }
-      // Default: site_only
+      // Default: multi_entry / site_only
       return classification === 'SITE_INTERNAL';
     });
 
@@ -572,19 +567,16 @@ export class ExcelService {
     const effectiveSite = filter?.site && filter.site !== 'ALL' ? filter.site : 'SENYIUR';
     const rawScope = (filter?.scope || 'site_only').toLowerCase().trim();
 
-    // Filter logs according to ERP Master Equipment rules
+    // Filter logs according to Syshab ERP rules:
+    // 2 Options:
+    // 1. Multi Entry Upload Syshab: ONLY equipment in current site Master Equipment (SITE_INTERNAL)
+    // 2. Other Consumption: ALL equipment NOT in current site Master Equipment (cross-site + unregistered/contractors)
     const eligibleLogs = logs.filter((log) => {
       const classification = MasterEquipmentService.classifyLog(log, effectiveSite);
-      if (classification === 'UNREGISTERED') {
-        return false;
-      }
-
       if (rawScope === 'other' || rawScope === 'other_consumption') {
-        return classification === 'OTHER_CONSUMPTION';
+        return classification === 'OTHER_CONSUMPTION' || classification === 'UNREGISTERED';
       }
-      if (rawScope === 'all' || rawScope === 'all_registered') {
-        return true;
-      }
+      // Default: multi_entry / site_only
       return classification === 'SITE_INTERNAL';
     });
 
@@ -713,10 +705,13 @@ export class ExcelService {
     const summary = {
       site: effectiveSite,
       totalLogs: logs.length,
+      multiEntry: { count: 0, volume: 0 },
       siteInternal: { count: 0, volume: 0 },
       otherConsumption: { count: 0, volume: 0 },
-      allRegistered: { count: 0, volume: 0 },
-      unregistered: { count: 0, volume: 0, sampleUnits: [] as string[] },
+      details: {
+        crossSite: { count: 0, volume: 0 },
+        unregistered: { count: 0, volume: 0, sampleUnits: [] as string[] },
+      },
     };
 
     const unregisteredUnits = new Set<string>();
@@ -724,23 +719,26 @@ export class ExcelService {
     logs.forEach((log) => {
       const cls = MasterEquipmentService.classifyLog(log, effectiveSite);
       if (cls === 'SITE_INTERNAL') {
+        summary.multiEntry.count++;
+        summary.multiEntry.volume += log.volumeLiters;
         summary.siteInternal.count++;
         summary.siteInternal.volume += log.volumeLiters;
-        summary.allRegistered.count++;
-        summary.allRegistered.volume += log.volumeLiters;
       } else if (cls === 'OTHER_CONSUMPTION') {
         summary.otherConsumption.count++;
         summary.otherConsumption.volume += log.volumeLiters;
-        summary.allRegistered.count++;
-        summary.allRegistered.volume += log.volumeLiters;
+        summary.details.crossSite.count++;
+        summary.details.crossSite.volume += log.volumeLiters;
       } else {
-        summary.unregistered.count++;
-        summary.unregistered.volume += log.volumeLiters;
+        // Unregistered / Non-Master Equipment: also included in Other Consumption!
+        summary.otherConsumption.count++;
+        summary.otherConsumption.volume += log.volumeLiters;
+        summary.details.unregistered.count++;
+        summary.details.unregistered.volume += log.volumeLiters;
         unregisteredUnits.add(log.unitCode);
       }
     });
 
-    summary.unregistered.sampleUnits = Array.from(unregisteredUnits).slice(0, 15);
+    summary.details.unregistered.sampleUnits = Array.from(unregisteredUnits).slice(0, 15);
     return summary;
   }
 }
