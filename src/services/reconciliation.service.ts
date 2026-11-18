@@ -44,7 +44,8 @@ export interface ReconciliationAuditResult {
 
 export class ReconciliationService {
   /**
-   * Evaluates logs for a given month and detects all data anomalies
+   * Evaluates logs for a given month and detects all data anomalies using bidirectional timeline analysis.
+   * Protects the true physical vehicle baseline (lastHm / lastKm) so future dispenser inputs are never blocked.
    */
   static async auditMonth(filter: { monthStr?: string; site?: string }): Promise<ReconciliationAuditResult> {
     const where: any = {};
@@ -81,7 +82,7 @@ export class ReconciliationService {
       duplicateTimestamp: 0,
     };
 
-    // Group logs by unitCode to analyze chronological meter sequence
+    // Group logs by unitCode to analyze chronological meter sequence per vehicle
     const unitGroups = new Map<string, typeof logs>();
     for (const log of logs) {
       const code = (log.unitCode || '').replace(/\s+/g, '');
@@ -91,15 +92,21 @@ export class ReconciliationService {
 
     for (const [unitCode, uLogs] of unitGroups.entries()) {
       const isHm = uLogs[0]?.unit?.hasHm ?? true;
-      let lastKnownValid = 0;
+      const n = uLogs.length;
 
-      for (let i = 0; i < uLogs.length; i++) {
+      let effectiveRunning: number | null = null;
+
+      for (let i = 0; i < n; i++) {
         const log = uLogs[i];
-        const nextLog = i < uLogs.length - 1 ? uLogs[i + 1] : null;
+        const prevLog = i > 0 ? uLogs[i - 1] : null;
+        const nextLog = i < n - 1 ? uLogs[i + 1] : null;
 
         const cur = isHm ? log.currentHm : log.currentKm;
         const prev = isHm ? log.previousHm : log.previousKm;
         const delta = cur - prev;
+
+        const prevCur: number | null = effectiveRunning !== null ? effectiveRunning : (prevLog ? (isHm ? prevLog.currentHm : prevLog.currentKm) : null);
+        const nextCur: number | null = nextLog ? (isHm ? nextLog.currentHm : nextLog.currentKm) : null;
 
         // 1. Non-dispense check (qty <= 0)
         if (log.volumeLiters <= 0) {
@@ -156,98 +163,120 @@ export class ReconciliationService {
           });
         }
 
-        // 3. Zero meter check
+        // 3. Zero meter check (Missing reading vs Permanent Non-Metered)
         if (cur === 0 && prev === 0) {
           categories.meterZero++;
-          const synthPrev = lastKnownValid > 0 ? lastKnownValid : 1;
-          const synthCur = synthPrev + 1;
-          anomalies.push({
-            id: log.id,
-            unitCode: log.unitCode,
-            category: log.category,
-            type: log.type,
-            dateStr: log.dateStr,
-            jamStr: log.jamStr,
-            shift: log.shift,
-            operator: log.operator || 'Admin',
-            volumeLiters: log.volumeLiters,
-            site: log.site,
-            meterType: isHm ? 'HM' : 'KM',
-            currentMeter: cur,
-            previousMeter: prev,
-            deltaMeter: delta,
-            anomalyType: 'METER_ZERO',
-            description: `Pembacaan meter 0 / tidak tercatat (Genset / Tower Lamp / Meter Rusak)`,
-            proposedPrevious: synthPrev,
-            proposedCurrent: synthCur,
-            confidence: 'HIGH',
-            fixStrategy: 'Set meter kronologis bertingkat & tandai bypass broken',
-          });
-          lastKnownValid = synthCur;
+          if (prevCur && nextCur && prevCur > 0 && nextCur >= prevCur) {
+            const interpolated = Math.round((prevCur + nextCur) / 2);
+            anomalies.push({
+              id: log.id,
+              unitCode: log.unitCode,
+              category: log.category,
+              type: log.type,
+              dateStr: log.dateStr,
+              jamStr: log.jamStr,
+              shift: log.shift,
+              operator: log.operator || 'Admin',
+              volumeLiters: log.volumeLiters,
+              site: log.site,
+              meterType: isHm ? 'HM' : 'KM',
+              currentMeter: 0,
+              previousMeter: 0,
+              deltaMeter: 0,
+              anomalyType: 'METER_ZERO',
+              description: `Meter kosong di antara ${prevCur} dan ${nextCur} -> Usulan interpolasi: ${interpolated}`,
+              proposedPrevious: prevCur,
+              proposedCurrent: interpolated,
+              confidence: 'HIGH',
+              fixStrategy: 'Isi estimasi wajar agar tidak bolong dan menjaga batas last meter unit',
+            });
+            effectiveRunning = interpolated;
+          } else {
+            anomalies.push({
+              id: log.id,
+              unitCode: log.unitCode,
+              category: log.category,
+              type: log.type,
+              dateStr: log.dateStr,
+              jamStr: log.jamStr,
+              shift: log.shift,
+              operator: log.operator || 'Admin',
+              volumeLiters: log.volumeLiters,
+              site: log.site,
+              meterType: isHm ? 'HM' : 'KM',
+              currentMeter: 0,
+              previousMeter: 0,
+              deltaMeter: 0,
+              anomalyType: 'METER_ZERO',
+              description: `Peralatan tanpa meter fisik (Genset / Tower Lamp)`,
+              proposedPrevious: 0,
+              proposedCurrent: 0,
+              confidence: 'HIGH',
+              fixStrategy: 'Pertahankan 0 di DB fisik; sanitasi virtual (Broken=2) diterapkan otomatis saat ekspor Syshab',
+            });
+          }
           continue;
         }
 
-        // 4. Standstill / Identical meter check (cur === prev)
-        if (cur === prev) {
-          categories.meterEqual++;
-          anomalies.push({
-            id: log.id,
-            unitCode: log.unitCode,
-            category: log.category,
-            type: log.type,
-            dateStr: log.dateStr,
-            jamStr: log.jamStr,
-            shift: log.shift,
-            operator: log.operator || 'Admin',
-            volumeLiters: log.volumeLiters,
-            site: log.site,
-            meterType: isHm ? 'HM' : 'KM',
-            currentMeter: cur,
-            previousMeter: prev,
-            deltaMeter: delta,
-            anomalyType: 'METER_EQUAL',
-            description: `Meter sama persis (${cur}) dengan selisih 0 jam/km (Unit standstill / double refuel)`,
-            proposedPrevious: prev,
-            proposedCurrent: cur + 1,
-            confidence: 'HIGH',
-            fixStrategy: 'Tambahkan selisih minimum +1 unit meter untuk memenuhi validasi ERP',
-          });
-          lastKnownValid = cur + 1;
-          continue;
-        }
+        // Spike threshold: HM > 24 hours jump, KM > 300 km jump
+        const spikeThreshold = isHm ? 24 : 300;
 
-        // 5. Meter backtrack / Decrease (cur < prev or cur < lastKnownValid)
-        if (cur < prev || (lastKnownValid > 0 && cur < lastKnownValid)) {
-          categories.meterDecrease++;
-          let propPrev = lastKnownValid > 0 ? lastKnownValid : prev;
-          let propCur = cur;
-          let fixDesc = '';
-
-          // Typo diagnosis
-          const diff = cur - (lastKnownValid > 0 ? lastKnownValid : prev);
-          if (diff < -100 && nextLog) {
-            const nextCur = isHm ? nextLog.currentHm : nextLog.currentKm;
-            // Check if missing leading digit e.g. 12248 between 141787 and 143036
-            if (cur < 20000 && lastKnownValid > 100000) {
-              const guessed = cur + 100000;
-              if (guessed >= lastKnownValid && guessed <= (nextCur > 0 ? nextCur : lastKnownValid + 500)) {
-                propCur = guessed;
-                propPrev = lastKnownValid;
-                fixDesc = `Typo digit ratusan ribu: Tambah +100.000 menjadi ${guessed}`;
-              }
-            } else if (nextCur >= lastKnownValid) {
-              // Interpolation between previous and next
-              const interpolated = Math.round((lastKnownValid + nextCur) / 2);
-              propPrev = lastKnownValid;
-              propCur = Math.max(lastKnownValid + 1, interpolated);
-              fixDesc = `Typo operator: Interpolasi di antara ${lastKnownValid} dan ${nextCur} -> ${propCur}`;
+        // 4. Isolated Spike Check (Outlier High Typo)
+        // cur jumps way higher than previous AND next drops back down to reasonable physical range!
+        if (prevCur !== null && nextCur !== null && cur > prevCur + spikeThreshold && cur > nextCur + spikeThreshold && nextCur >= prevCur) {
+          categories.meterJump++;
+          let propCur = Math.round((prevCur + nextCur) / 2);
+          const strCur = String(Math.round(cur));
+          const strPrev = String(Math.round(prevCur));
+          if (strCur.length === strPrev.length && strCur.substring(1) === strPrev.substring(1)) {
+            propCur = Number(strPrev[0] + strCur.substring(1));
+          } else {
+            const last3 = cur % 1000;
+            const candidate = Math.floor(prevCur / 1000) * 1000 + last3;
+            if (candidate >= prevCur && candidate <= nextCur) {
+              propCur = candidate;
             }
           }
 
-          if (!fixDesc) {
-            propPrev = lastKnownValid > 0 ? lastKnownValid : prev;
-            propCur = propPrev + 1;
-            fixDesc = `Koreksi mundur kronologis: Sesuaikan agar maju dari ${propPrev} ke ${propCur}`;
+          anomalies.push({
+            id: log.id,
+            unitCode: log.unitCode,
+            category: log.category,
+            type: log.type,
+            dateStr: log.dateStr,
+            jamStr: log.jamStr,
+            shift: log.shift,
+            operator: log.operator || 'Admin',
+            volumeLiters: log.volumeLiters,
+            site: log.site,
+            meterType: isHm ? 'HM' : 'KM',
+            currentMeter: cur,
+            previousMeter: prev,
+            deltaMeter: delta,
+            anomalyType: 'METER_JUMP',
+            description: `Lonjakan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
+            proposedPrevious: prevCur,
+            proposedCurrent: propCur,
+            confidence: 'HIGH',
+            fixStrategy: `Koreksi typo digit lonjakan ke nilai riil armada (${propCur}) agar batas last meter tidak melonjak`,
+          });
+          effectiveRunning = propCur;
+          continue;
+        }
+
+        // 5. Isolated Dip Check (Outlier Low Typo)
+        // cur is smaller than prevCur, BUT nextCur is normal (>= prevCur)
+        if (prevCur !== null && nextCur !== null && cur < prevCur && nextCur >= prevCur && nextCur > cur) {
+          categories.meterDecrease++;
+          let propCur = Math.round((prevCur + nextCur) / 2);
+          if (cur + 100000 >= prevCur && cur + 100000 <= nextCur) {
+            propCur = cur + 100000;
+          } else {
+            const last3 = cur % 1000;
+            const candidate = Math.floor(prevCur / 1000) * 1000 + last3;
+            if (candidate >= prevCur && candidate <= nextCur) {
+              propCur = candidate;
+            }
           }
 
           anomalies.push({
@@ -266,20 +295,19 @@ export class ReconciliationService {
             previousMeter: prev,
             deltaMeter: delta,
             anomalyType: 'METER_DECREASE',
-            description: `Meter mundur dari ${lastKnownValid > 0 ? lastKnownValid : prev} ke ${cur} (selisih ${diff})`,
-            proposedPrevious: propPrev,
+            description: `Penurunan typo terisolasi (${cur}) di antara ${prevCur} dan ${nextCur}`,
+            proposedPrevious: prevCur,
             proposedCurrent: propCur,
-            confidence: Math.abs(diff) <= 10 ? 'HIGH' : 'MEDIUM',
-            fixStrategy: fixDesc,
+            confidence: 'HIGH',
+            fixStrategy: `Koreksi typo penurunan ke nilai riil armada (${propCur}) sesuai lintasan fisik unit`,
           });
-          lastKnownValid = propCur;
+          effectiveRunning = propCur;
           continue;
         }
 
-        // 6. Extreme jump check (HM > 72h or KM > 1500km)
-        const threshold = isHm ? 72 : 1500;
-        if (delta > threshold) {
-          categories.meterJump++;
+        // 6. Standstill / Equal Check (cur === prev or cur === prevCur)
+        if (cur === prev || (prevCur !== null && cur === prevCur)) {
+          categories.meterEqual++;
           anomalies.push({
             id: log.id,
             unitCode: log.unitCode,
@@ -295,16 +323,48 @@ export class ReconciliationService {
             currentMeter: cur,
             previousMeter: prev,
             deltaMeter: delta,
-            anomalyType: 'METER_JUMP',
-            description: `Lompatan meter ekstrem ${delta} ${isHm ? 'jam' : 'km'} (ambang wajar: ${threshold})`,
+            anomalyType: 'METER_EQUAL',
+            description: `Meter sama persis (${cur}) / unit standby (selisih 0 jam/km)`,
             proposedPrevious: prev,
-            proposedCurrent: prev + (isHm ? 12 : 150),
-            confidence: 'MEDIUM',
-            fixStrategy: 'Sesuaikan pertambahan meter ke rata-rata pemakaian normal',
+            proposedCurrent: cur,
+            confidence: 'HIGH',
+            fixStrategy: 'Pertahankan nilai fisik di DB; saat ekspor Syshab otomatis disesuaikan secara virtual',
           });
+          effectiveRunning = cur;
+          continue;
         }
 
-        lastKnownValid = cur;
+        // 7. Unrecovered Backtrack (Chronological Decrease)
+        if (prevCur !== null && cur < prevCur) {
+          categories.meterDecrease++;
+          anomalies.push({
+            id: log.id,
+            unitCode: log.unitCode,
+            category: log.category,
+            type: log.type,
+            dateStr: log.dateStr,
+            jamStr: log.jamStr,
+            shift: log.shift,
+            operator: log.operator || 'Admin',
+            volumeLiters: log.volumeLiters,
+            site: log.site,
+            meterType: isHm ? 'HM' : 'KM',
+            currentMeter: cur,
+            previousMeter: prev,
+            deltaMeter: delta,
+            anomalyType: 'METER_DECREASE',
+            description: `Meter turun dari ${prevCur} ke ${cur}`,
+            proposedPrevious: prevCur,
+            proposedCurrent: cur,
+            confidence: 'MEDIUM',
+            fixStrategy: 'Verifikasi fisik catatan penggantian meter mesin/alat di lapangan',
+          });
+          effectiveRunning = cur;
+          continue;
+        }
+
+        // Valid normal record
+        effectiveRunning = cur;
       }
     }
 
@@ -325,7 +385,8 @@ export class ReconciliationService {
   }
 
   /**
-   * Applies approved reconciliation fixes in a secure atomic transaction with audit trail
+   * Applies approved reconciliation fixes in a secure atomic transaction with audit trail.
+   * Synchronizes each affected unit's authoritative lastHm / lastKm in the Unit table to its true latest log.
    */
   static async applyFixes(dto: {
     fixes: {
@@ -410,6 +471,35 @@ export class ReconciliationService {
       }
     });
 
+    // Synchronize affected units' lastHm and lastKm to their true latest fuel log
+    const affectedUnitIds = new Set<string>();
+    for (const l of existingLogs) {
+      if (l.unitId) affectedUnitIds.add(l.unitId);
+    }
+
+    for (const unitId of affectedUnitIds) {
+      const latestLog = await prisma.fuelLog.findFirst({
+        where: { unitId },
+        orderBy: [{ dateStr: 'desc' }, { jamStr: 'desc' }],
+        include: { unit: true },
+      });
+      if (latestLog && latestLog.unit) {
+        const updateData: any = {};
+        if (latestLog.unit.hasHm && latestLog.currentHm > 0) {
+          updateData.lastHm = latestLog.currentHm;
+        }
+        if (latestLog.unit.hasKm && latestLog.currentKm > 0) {
+          updateData.lastKm = latestLog.currentKm;
+        }
+        if (Object.keys(updateData).length > 0) {
+          await prisma.unit.update({
+            where: { id: unitId },
+            data: updateData,
+          });
+        }
+      }
+    }
+
     logger.info(`Reconciliation applied: ${updates.length} logs successfully reconciled by user ${dto.userId || 'Admin'}`);
 
     return {
@@ -447,21 +537,48 @@ export class ReconciliationService {
     }
 
     let rolledBackCount = 0;
+    const affectedUnitIds = new Set<string>();
+
     await prisma.$transaction(async (tx) => {
       for (const record of auditRecords) {
         if (!record.entityId || !record.oldValues) continue;
         try {
           const original = JSON.parse(record.oldValues);
-          await tx.fuelLog.update({
+          const updated = await tx.fuelLog.update({
             where: { id: record.entityId },
             data: original,
           });
+          affectedUnitIds.add(updated.unitId);
           rolledBackCount++;
         } catch (e: any) {
           logger.warn(`Failed to rollback log ${record.entityId}: ${e.message}`);
         }
       }
     });
+
+    // Re-sync unit baselines after rollback
+    for (const unitId of affectedUnitIds) {
+      const latestLog = await prisma.fuelLog.findFirst({
+        where: { unitId },
+        orderBy: [{ dateStr: 'desc' }, { jamStr: 'desc' }],
+        include: { unit: true },
+      });
+      if (latestLog && latestLog.unit) {
+        const updateData: any = {};
+        if (latestLog.unit.hasHm && latestLog.currentHm > 0) {
+          updateData.lastHm = latestLog.currentHm;
+        }
+        if (latestLog.unit.hasKm && latestLog.currentKm > 0) {
+          updateData.lastKm = latestLog.currentKm;
+        }
+        if (Object.keys(updateData).length > 0) {
+          await prisma.unit.update({
+            where: { id: unitId },
+            data: updateData,
+          });
+        }
+      }
+    }
 
     return {
       success: true,
@@ -475,10 +592,8 @@ export class ReconciliationService {
    * Ensures 100% ERP compatibility without requiring database mutation
    */
   static autoSanitizeForErp(rawLogs: any[]): any[] {
-    // 1. Exclude non-dispense (volume <= 0)
     const dispenseLogs = rawLogs.filter((l) => l.volumeLiters > 0);
 
-    // 2. Group by unitCode
     const groups = new Map<string, any[]>();
     for (const log of dispenseLogs) {
       const key = (log.unitCode || '').replace(/\s+/g, '');
@@ -489,7 +604,6 @@ export class ReconciliationService {
     const sanitized: any[] = [];
 
     for (const [unitCode, unitLogs] of groups.entries()) {
-      // Sort chronologically
       unitLogs.sort((a, b) => {
         const cmpDate = (a.dateStr || '').localeCompare(b.dateStr || '');
         if (cmpDate !== 0) return cmpDate;
@@ -497,18 +611,37 @@ export class ReconciliationService {
       });
 
       const isHmPrimary = unitLogs[0]?.unit?.hasHm ?? true;
+      const n = unitLogs.length;
       let runningLastMeter = 0;
 
-      for (let i = 0; i < unitLogs.length; i++) {
+      for (let i = 0; i < n; i++) {
         const log = unitLogs[i];
+        const nextLog = i < n - 1 ? unitLogs[i + 1] : null;
+
         let rawCur = isHmPrimary ? (log.currentHm || 0) : (log.currentKm || 0);
         let rawPrev = isHmPrimary ? (log.previousHm || 0) : (log.previousKm || 0);
+
+        const nextCur = nextLog ? (isHmPrimary ? (nextLog.currentHm || 0) : (nextLog.currentKm || 0)) : null;
 
         let cur = rawCur;
         let prev = rawPrev;
         let bypass = log.bypassValidation;
 
-        // Case A: Zero meter (Genset / Tower Lamp without meter)
+        // Check if rawCur is an isolated spike (e.g. 8534 between 4527 and 4540)
+        // If so, correct cur down to trajectory so runningLastMeter doesn't get contaminated!
+        if (runningLastMeter > 0 && nextCur !== null && cur > runningLastMeter + 24 && cur > nextCur + 24 && nextCur >= runningLastMeter) {
+          const strCur = String(Math.round(cur));
+          const strPrev = String(Math.round(runningLastMeter));
+          if (strCur.length === strPrev.length && strCur.substring(1) === strPrev.substring(1)) {
+            cur = Number(strPrev[0] + strCur.substring(1));
+          } else {
+            cur = Math.round((runningLastMeter + nextCur) / 2);
+          }
+          prev = runningLastMeter;
+          bypass = true;
+        }
+
+        // Case A: Zero meter
         if (cur === 0 && prev === 0) {
           bypass = true;
           if (runningLastMeter === 0) {
@@ -519,7 +652,7 @@ export class ReconciliationService {
             cur = runningLastMeter + 1;
           }
         } else {
-          // Case B: Has meter
+          // Case B: Normal progression or dip
           if (runningLastMeter > 0 && prev < runningLastMeter) {
             if (cur < runningLastMeter) {
               bypass = true;
@@ -530,7 +663,6 @@ export class ReconciliationService {
             }
           }
 
-          // Case C: cur <= prev (Identical / Standstill / Typo)
           if (cur <= prev) {
             bypass = true;
             cur = prev + 1;
@@ -548,7 +680,6 @@ export class ReconciliationService {
       }
     }
 
-    // Sort chronologically across all units
     sanitized.sort((a, b) => {
       const cmpDate = (a.dateStr || '').localeCompare(b.dateStr || '');
       if (cmpDate !== 0) return cmpDate;
